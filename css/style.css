@@ -420,7 +420,12 @@ body {
 }
 .rail-play:active { transform: translateY(2px); }
 .rail-play .rail-day { color: var(--secondary-container); }
-.rail-card .rail-icon { font-size: 30px; }
+.rail-card .rail-icon { font-size: 30px; line-height: 1; }
+.rail-card .rail-icon svg {
+  width: 36px; height: 36px;
+  color: var(--secondary-container);
+  filter: drop-shadow(0 0 8px rgba(0, 244, 254, 0.55));
+}
 .rail-card .rail-name { font-family: var(--font-head); font-size: 13px; font-weight: 600; margin-top: 6px; }
 .rail-card .rail-day { margin-top: 4px; color: var(--outline); }
 

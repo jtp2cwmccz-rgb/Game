@@ -2010,6 +2010,25 @@ function gameBeer(stage, rng, api) {
 }
 
 /* ============================================================
+   Iconos de línea (estilo design system de Stitch: Material
+   Symbols outlined + glow neón). Sustituyen a los emojis en la
+   galería. `currentColor` los tiñe desde el CSS.
+   ============================================================ */
+const _svg = (inner) =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+const GAME_ICONS = {
+  flip:   _svg('<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/>'),
+  duet:   _svg('<circle cx="12" cy="12" r="8"/><circle cx="12" cy="4" r="1.9" fill="currentColor" stroke="none"/><circle cx="12" cy="20" r="1.9" fill="currentColor" stroke="none"/>'),
+  stairs: _svg('<path d="M3 20h4v-4h4v-4h4v-4h5"/>'),
+  tuktuk: _svg('<path d="M4 15v-2l2-5h8l3 5v2"/><path d="M2 15h20"/><circle cx="8" cy="17" r="1.8"/><circle cx="16" cy="17" r="1.8"/>'),
+  jumpy:  _svg('<path d="M6 13l6-6 6 6"/><path d="M6 18l6-6 6 6"/>'),
+  trafix: _svg('<rect x="8" y="2" width="8" height="15" rx="4"/><path d="M12 17v4"/><path d="M6 21h12"/><circle cx="12" cy="6.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="9.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="12.5" r="1.1" fill="currentColor" stroke="none"/>'),
+  bowl:   _svg('<path d="M3 11h18a9 9 0 0 1-18 0z"/><path d="M8.5 7c0-1.2 1-1.2 1-2.5"/><path d="M13.5 7c0-1.2 1-1.2 1-2.5"/>'),
+  beer:   _svg('<path d="M7 8h8v11a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1z"/><path d="M15 11h2a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2h-2"/><path d="M7 8c-1.1 0-2-.9-2-2s.9-2 2-2c.2-1.1 1.2-2 2.4-2 .7 0 1.3.3 1.8.8.5-.5 1.1-.8 1.8-.8 1.2 0 2.2.9 2.4 2 1.1 0 2 .9 2 2s-.9 2-2 2z"/>'),
+};
+function gameIcon(g) { return GAME_ICONS[g.id] || g.icon; }
+
+/* ============================================================
    Catálogo — la rotación diaria escoge uno por fecha
    ============================================================ */
 const GAMES = [

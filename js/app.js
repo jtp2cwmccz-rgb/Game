@@ -496,7 +496,7 @@ function renderHome() {
     GAMES.forEach(g => {
       const c = document.createElement('button');
       c.className = 'rail-card glass rail-play';
-      c.innerHTML = `<div class="rail-icon">${g.icon}</div><div class="rail-name">${g.name}</div><div class="rail-day label-caps">JUGAR ▶</div>`;
+      c.innerHTML = `<div class="rail-icon">${gameIcon(g)}</div><div class="rail-name">${g.name}</div><div class="rail-day label-caps">JUGAR ▶</div>`;
       c.addEventListener('click', () => playDaily(g));
       rail.append(c);
     });
@@ -506,7 +506,7 @@ function renderHome() {
       const g = gameForDate(k);
       const c = document.createElement('div');
       c.className = 'rail-card glass';
-      c.innerHTML = `<div class="rail-icon">${g.icon}</div><div class="rail-name">${g.name}</div><div class="rail-day label-caps">${fmtDate(k)}</div>`;
+      c.innerHTML = `<div class="rail-icon">${gameIcon(g)}</div><div class="rail-name">${g.name}</div><div class="rail-day label-caps">${fmtDate(k)}</div>`;
       rail.append(c);
     }
   }
