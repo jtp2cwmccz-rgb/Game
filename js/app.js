@@ -153,14 +153,14 @@ function boardAdvance(key, name, avatar, n, reason, silent = false) {
   if (pos >= BOARD_SIZE) {
     // 🏁 meta: gana la temporada y el tablero se reinicia
     state.board.winners.push({ key, name, season: state.board.season, at: Date.now() });
-    state.board.log.unshift({ name, avatar, text: `🏁 ¡${name} gana la temporada ${state.board.season}!`, at: Date.now() });
+    state.board.log.unshift({ name, avatar, text: `🏆 ¡${name} gana la temporada ${state.board.season}!`, at: Date.now() });
     state.board.season++;
     Object.values(state.board.positions).forEach(x => { x.pos = 0; });
     saveState();
     if (!silent) {
       showResult({
         label: `TEMPORADA ${state.board.season - 1}`,
-        title: key === '@me' ? '¡META! 🏁' : `¡GANA ${name.toUpperCase()}!`,
+        title: key === '@me' ? '¡META! 🏆' : `¡GANA ${name.toUpperCase()}!`,
         mood: key === '@me' ? 'win' : 'lose',
         score: null,
         detail: `${name} llegó a la casilla ${BOARD_SIZE}. Empieza la temporada ${state.board.season}: todas las fichas vuelven a la salida.`,
@@ -172,11 +172,11 @@ function boardAdvance(key, name, avatar, n, reason, silent = false) {
 
   if (BOARD_TURBO.includes(pos)) {
     const next = BOARD_TURBO.find(t => t > pos) || BOARD_SIZE - 1;
-    extra = ` 🌀 ¡portal! salta a la ${next}`;
+    extra = ` ⚡ ¡rayo turbo! salta a la ${next}`;
     pos = next;
   } else if (BOARD_HOLES.includes(pos)) {
     pos = Math.max(0, pos - 3);
-    extra = ` 🕳️ agujero negro, retrocede a la ${pos}`;
+    extra = ` 💀 trampa, retrocede a la ${pos}`;
   }
 
   p.pos = pos;
@@ -186,46 +186,85 @@ function boardAdvance(key, name, avatar, n, reason, silent = false) {
   if (!silent) toast(`🎲 +${n} casillas${extra ? ' ·' + extra : ''} → casilla ${pos}`);
 }
 
+/* iconos Material-style en SVG (fiables sin fuente de iconos) */
+const SVG_TROPHY = '<svg viewBox="0 0 24 24"><path d="M6 2h12v2h4v3a5 5 0 0 1-4.7 5A6 6 0 0 1 13 15.9V18h3v3H8v-3h3v-2.1A6 6 0 0 1 6.7 12 5 5 0 0 1 2 7V4h4zm-2 4v1a3 3 0 0 0 2 2.8V6zm16 0h-2v3.8A3 3 0 0 0 20 7z"/></svg>';
+const SVG_BOLT = '<svg viewBox="0 0 24 24"><path d="M13 2 4.5 13.5H10L9 22l8.5-11.5H12z"/></svg>';
+const SVG_STAR = '<svg viewBox="0 0 24 24"><path d="m12 2 2.9 6.3 6.9.6-5.2 4.6 1.5 6.8L12 16.7l-6.1 3.6 1.5-6.8L2.2 8.9l6.9-.6z"/></svg>';
+const BOARD_STAR = 20; // hito visual a mitad de camino
+
+const QUEST_OFFSETS = [0, 48, -56, 0, 64, -48, 24, -64, 40, -24];
+
+function questTile(type, inner) {
+  const t = el('div', `hex ${type}`);
+  t.append(Object.assign(el('div', 'hex-in'), { innerHTML: inner }));
+  return t;
+}
+
 function renderBoard() {
   initBoard();
   $('#board-sub').textContent = `Temporada ${state.board.season} · Meta: casilla ${BOARD_SIZE}`;
 
-  const grid = $('#board-grid');
-  grid.innerHTML = '';
+  const col = $('#board-grid');
+  col.innerHTML = '';
   const byPos = {};
   Object.entries(state.board.positions).forEach(([key, p]) => {
     (byPos[p.pos] = byPos[p.pos] || []).push({ ...p, me: key === '@me' });
   });
+  const myPos = state.board.positions['@me'].pos;
 
-  for (let s = 1; s <= BOARD_SIZE; s++) {
-    const cell = document.createElement('div');
-    const idx = s - 1;
-    const row = Math.floor(idx / 5);
-    let col = idx % 5;
-    if (row % 2 === 1) col = 4 - col;             // serpiente
-    cell.style.gridRow = String(8 - row);          // la salida abajo, la meta arriba
-    cell.style.gridColumn = String(col + 1);
-    let cls = 'board-cell';
-    let icon = '';
-    if (s === BOARD_SIZE) { cls += ' goal'; icon = '🏁'; }
-    else if (BOARD_TURBO.includes(s)) { cls += ' turbo'; icon = '🌀'; }
-    else if (BOARD_HOLES.includes(s)) { cls += ' hole'; icon = '🕳️'; }
-    cell.className = cls;
-    cell.innerHTML = `<span class="cell-num">${s}</span>${icon}`;
-    const players = byPos[s] || [];
-    if (players.length) {
-      if (players.some(p => p.me)) cell.classList.add('has-me');
-      const tk = document.createElement('div');
-      tk.className = 'cell-tokens';
-      players.slice(0, 3).forEach(p => {
-        const t = document.createElement('span');
-        t.className = 'cell-token';
-        t.textContent = p.avatar;
-        tk.append(t);
-      });
-      cell.append(tk);
+  // de la meta (arriba) a la salida (abajo); la casilla 0 es START
+  for (let s = BOARD_SIZE; s >= 0; s--) {
+    const slot = el('div', 'tile-slot');
+    slot.style.transform = `translateX(${QUEST_OFFSETS[s % QUEST_OFFSETS.length]}px)`;
+
+    let tile;
+    if (s === myPos) {
+      tile = questTile('hx-me', state.profile.avatar);
+      slot.append(Object.assign(el('div', 'here-pill'), { textContent: 'ESTÁS AQUÍ' }));
+    } else if (s === BOARD_SIZE) {
+      tile = questTile('hx-goal', SVG_TROPHY);
+    } else if (s === 0) {
+      tile = questTile('hx-start', '<span class="hex-num">START</span>');
+    } else if (BOARD_TURBO.includes(s)) {
+      tile = questTile('hx-boost', SVG_BOLT);
+    } else if (BOARD_HOLES.includes(s)) {
+      tile = questTile('hx-trap', '💀');
+    } else if (s === BOARD_STAR) {
+      tile = questTile('hx-star', SVG_STAR);
+    } else {
+      tile = questTile('hx-normal', `<span class="hex-num">${String(s).padStart(2, '0')}</span>`);
     }
-    grid.append(cell);
+    slot.append(tile);
+
+    // rivales junto a la casilla (tú vas dentro del hexágono)
+    const rivals = (byPos[s] || []).filter(p => !p.me);
+    rivals.slice(0, 2).forEach((p, i) => {
+      const tok = el('div', `side-token ${i % 2 ? 'left' : 'right'}`, `${p.avatar}<span class="st-name">${escapeHtml(p.name)}</span>`);
+      slot.append(tok);
+    });
+    if (rivals.length > 2) {
+      slot.append(el('div', 'side-token left', `+${rivals.length - 2}`));
+    }
+
+    col.append(slot);
+  }
+
+  // centrar la vista en tu casilla
+  const meTile = col.querySelector('.hx-me');
+  if (meTile && $('#view-board').classList.contains('active')) {
+    setTimeout(() => meTile.scrollIntoView({ block: 'center' }), 60);
+  }
+
+  // banner de movimiento
+  const res = state.results[todayKey()];
+  if (res) {
+    $('#qb-title').textContent = `+${res.score} PTS GANADOS`;
+    $('#qb-sub').textContent = `Casilla ${myPos} de ${BOARD_SIZE} · ${gameForDate(todayKey()).name}`;
+    $('#qb-btn').textContent = 'MEJORAR';
+  } else {
+    $('#qb-title').textContent = 'RETO PENDIENTE';
+    $('#qb-sub').textContent = `Avanza hasta ${squaresForScore(5000)} casillas hoy`;
+    $('#qb-btn').textContent = 'JUGAR';
   }
 
   // fichas aún en la salida
@@ -424,6 +463,7 @@ setInterval(() => {
 }, 1000);
 
 $('#home-play-btn').addEventListener('click', playDaily);
+$('#qb-btn').addEventListener('click', playDaily);
 
 /* ============================================================
    RANKING

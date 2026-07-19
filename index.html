@@ -134,22 +134,25 @@
     </section>
   </main>
 
-  <!-- ============ BOARD (estilo oca) ============ -->
-  <main id="view-board" class="view">
-    <header class="page-head">
-      <h1 class="page-title">El Tablero</h1>
+  <!-- ============ QUEST BOARD (camino hexagonal estilo oca) ============ -->
+  <main id="view-board" class="view neon-grid">
+    <header class="page-head quest-head">
+      <h1 class="page-title quest-title">QUEST BOARD</h1>
       <p class="page-sub" id="board-sub">Temporada 1 · Meta: casilla 40</p>
     </header>
 
     <section class="section">
-      <div class="board-grid" id="board-grid"></div>
+      <div class="quest-wrap">
+        <div class="quest-path-line"></div>
+        <div class="quest-col" id="board-grid"></div>
+      </div>
     </section>
 
     <section class="section">
       <div class="card glass board-legend">
         <p class="label-caps text-muted">CÓMO FUNCIONA</p>
         <p class="hint">Al completar el reto diario avanzas <b>1–6 casillas</b> según tu puntuación (500 pts ≈ 1 casilla). Ganar un duelo da <b>+3</b>. Los amigos avanzan al pegar sus códigos.</p>
-        <p class="hint">🌀 <b>Portal turbo</b>: saltas al siguiente portal · 🕳️ <b>Agujero negro</b>: retrocedes 3 · 🏁 <b>Meta</b>: ¡ganas la temporada y el tablero se reinicia!</p>
+        <p class="hint">⚡ <b>Rayo turbo</b>: saltas al siguiente rayo · 💀 <b>Trampa</b>: retrocedes 3 · 🏆 <b>Meta</b>: ¡ganas la temporada y el tablero se reinicia!</p>
       </div>
     </section>
 
@@ -157,6 +160,20 @@
       <div class="section-head"><p class="label-caps text-muted">ÚLTIMOS MOVIMIENTOS</p></div>
       <div id="board-log" class="stack"></div>
     </section>
+
+    <!-- banner de movimiento (fijo sobre la nav) -->
+    <div class="quest-banner" id="board-banner">
+      <div class="qb-icon">
+        <svg viewBox="0 0 24 24"><path d="m3 17 6-6 4 4 7-7v4h2V5h-7v2h4l-6 6-4-4-8 8z"/></svg>
+      </div>
+      <div class="qb-info">
+        <p class="label-caps text-cyan" id="qb-title">RETO PENDIENTE</p>
+        <p class="qb-sub" id="qb-sub">Juega para avanzar</p>
+      </div>
+      <button class="btn-3d btn-primary btn-sm" id="qb-btn">JUGAR</button>
+    </div>
+
+    <div class="vignette"></div>
   </main>
 
   <!-- ============ LEADERBOARD ============ -->
