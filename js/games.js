@@ -759,10 +759,254 @@ function gameStairs(stage, rng, api) {
 }
 
 /* ============================================================
+   TUK-TUK RUSH (esquivar tráfico, inspirado en Tailandia)
+   Conduces un tuk-tuk por Bangkok de noche: toca izquierda o
+   derecha para cambiar de carril y esquiva el tráfico (¡y los
+   elefantes!). La velocidad sube con el tiempo.
+   ============================================================ */
+function gameTuktuk(stage, rng, api) {
+  const wrap = el('div', 'flip-wrap');
+  const canvas = el('canvas', 'flip-canvas');
+  const hint = el('p', 'stage-timer', 'TOCA IZQUIERDA / DERECHA PARA CAMBIAR DE CARRIL');
+  wrap.append(canvas, hint);
+  stage.append(wrap);
+
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
+
+  (function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width;
+    H = Math.max(340, r.height - 40);
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  })();
+
+  const LANES = 3;
+  const ROAD_W = Math.min(W * 0.72, 300);
+  const ROAD_X = (W - ROAD_W) / 2;
+  const LANE_W = ROAD_W / LANES;
+  const PLAYER_Y = H - 74;
+  const CYAN = '#00f4fe', PINK = '#ff007a';
+
+  const CARS = ['🚕', '🚌', '🚚', '🛵', '🚗'];
+  const DECOR = ['🌴', '🏮', '🛕', '🌴', '🍜', '🏮', '🌴'];
+
+  let lane = 1;                 // carril objetivo
+  let laneF = 1;                // carril interpolado (para el dibujo y colisión)
+  let rows = [];                // { y, cars: [{lane, emoji}], counted }
+  let prevGap = 1;
+  let t = 0;
+  let untilSpawn = 0.5;
+  let roadScroll = 0;
+  let meters = 0;
+  let dodged = 0;
+  let score = 0;
+  let over = false;
+  let crashAt = null;           // { x, y }
+  let notice = null;
+  let level = 0;
+  let raf = null;
+  let last = performance.now();
+
+  const LEVELS = [
+    [15, '¡HORA PUNTA!'],
+    [32, '¡A TODO GAS!'],
+  ];
+
+  function laneX(l) { return ROAD_X + LANE_W * (l + 0.5); }
+
+  /* cada fila deja siempre un hueco alcanzable desde el hueco anterior */
+  function spawnRow() {
+    const shift = Math.floor(rng() * 3) - 1;
+    const gap = Math.max(0, Math.min(LANES - 1, prevGap + shift));
+    prevGap = gap;
+    const cars = [];
+    for (let l = 0; l < LANES; l++) {
+      if (l === gap) continue;
+      if (rng() < 0.3) continue; // a veces queda otro hueco extra
+      const emoji = rng() < 0.08 ? '🐘' : CARS[Math.floor(rng() * CARS.length)];
+      cars.push({ lane: l, emoji });
+    }
+    rows.push({ y: -50, cars, counted: false });
+  }
+
+  function setLane(clientX) {
+    const r = canvas.getBoundingClientRect();
+    lane = clientX < r.left + r.width / 2 ? Math.max(0, lane - 1) : Math.min(LANES - 1, lane + 1);
+  }
+  canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); if (!over) setLane(e.clientX); });
+  const onKey = (e) => {
+    if (e.repeat || over) return;
+    if (e.key === 'ArrowLeft') lane = Math.max(0, lane - 1);
+    if (e.key === 'ArrowRight') lane = Math.min(LANES - 1, lane + 1);
+  };
+  window.addEventListener('keydown', onKey);
+
+  function crash(x, y) {
+    if (over) return;
+    over = true;
+    crashAt = { x, y };
+    setTimeout(() => api.finish(score, `${dodged} vehículos esquivados · ${Math.round(meters)} m`), 850);
+  }
+
+  function step(dt) {
+    if (over) return;
+    t += dt;
+
+    if (level < LEVELS.length && t >= LEVELS[level][0]) {
+      notice = { text: LEVELS[level][1], t: 1.6 };
+      level++;
+    }
+    if (notice) { notice.t -= dt; if (notice.t <= 0) notice = null; }
+
+    const speed = Math.min(560, 250 + t * 9);
+    roadScroll = (roadScroll + speed * dt) % 60;
+    meters += speed * dt / 30;
+
+    laneF += (lane - laneF) * Math.min(1, dt * 14);
+
+    untilSpawn -= dt;
+    if (untilSpawn <= 0) {
+      spawnRow();
+      untilSpawn = Math.max(0.52, 1.1 - t * 0.011) + rng() * 0.15;
+    }
+
+    for (const row of rows) {
+      row.y += speed * dt;
+      if (!row.counted && row.y > PLAYER_Y + 26) {
+        row.counted = true;
+        dodged += row.cars.length;
+        score += row.cars.length * 50;
+        api.setScore(score);
+      }
+      // colisión: mismo carril (±0.45) y solape vertical
+      for (const c of row.cars) {
+        if (Math.abs(c.lane - laneF) < 0.45 && Math.abs(row.y - PLAYER_Y) < 40) {
+          crash(laneX(c.lane), row.y);
+        }
+      }
+    }
+    rows = rows.filter(r => r.y < H + 80);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // arcenes con decorado tailandés desplazándose
+    ctx.font = '22px serif';
+    ctx.textAlign = 'center';
+    for (let i = -1; i < H / 90 + 1; i++) {
+      const y = ((i * 90 + roadScroll * 1.5) % (H + 90));
+      const di = Math.abs(Math.floor((i * 90) / 90)) % DECOR.length;
+      ctx.globalAlpha = 0.85;
+      ctx.fillText(DECOR[di], ROAD_X / 2, y);
+      ctx.fillText(DECOR[(di + 3) % DECOR.length], W - ROAD_X / 2, y + 45);
+      ctx.globalAlpha = 1;
+    }
+
+    // carretera
+    ctx.fillStyle = '#060e20';
+    ctx.fillRect(ROAD_X, 0, ROAD_W, H);
+    ctx.strokeStyle = 'rgba(0,244,254,0.5)';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(ROAD_X, 0); ctx.lineTo(ROAD_X, H);
+    ctx.moveTo(ROAD_X + ROAD_W, 0); ctx.lineTo(ROAD_X + ROAD_W, H);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // líneas discontinuas de carril
+    ctx.strokeStyle = 'rgba(235,178,255,0.35)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([26, 34]);
+    ctx.lineDashOffset = -roadScroll;
+    for (let l = 1; l < LANES; l++) {
+      ctx.beginPath();
+      ctx.moveTo(ROAD_X + LANE_W * l, -20);
+      ctx.lineTo(ROAD_X + LANE_W * l, H + 20);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // tráfico
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const row of rows) {
+      for (const c of row.cars) {
+        ctx.font = c.emoji === '🐘' || c.emoji === '🚌' || c.emoji === '🚚' ? '34px serif' : '30px serif';
+        ctx.shadowColor = PINK;
+        ctx.shadowBlur = 10;
+        ctx.fillText(c.emoji, laneX(c.lane), row.y);
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    // tu tuk-tuk
+    ctx.font = '34px serif';
+    ctx.shadowColor = CYAN;
+    ctx.shadowBlur = 16;
+    ctx.fillText('🛺', laneX(laneF), PLAYER_Y);
+    ctx.shadowBlur = 0;
+
+    // marcador de metros
+    ctx.font = '700 13px Space Grotesk, monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(218,226,253,0.55)';
+    ctx.fillText(`${Math.round(meters)} m`, 12, 22);
+
+    if (notice) {
+      ctx.font = '800 26px Lexend, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ebb2ff';
+      ctx.globalAlpha = Math.min(1, notice.t * 2);
+      ctx.shadowColor = '#bc13fe';
+      ctx.shadowBlur = 22;
+      ctx.fillText(notice.text, W / 2, H * 0.25);
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
+    }
+
+    if (crashAt) {
+      ctx.font = '40px serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('💥', crashAt.x, Math.min(crashAt.y, H - 20));
+      ctx.font = '800 34px Lexend, sans-serif';
+      ctx.fillStyle = '#ff5470';
+      ctx.shadowColor = '#ff5470';
+      ctx.shadowBlur = 20;
+      ctx.fillText('¡CRASH!', W / 2, H * 0.35);
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  function loop(now) {
+    if (api.done) return;
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    step(dt);
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+  raf = requestAnimationFrame(loop);
+
+  api.onQuit = () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener('keydown', onKey);
+  };
+}
+
+/* ============================================================
    Catálogo — la rotación diaria escoge uno por fecha
    ============================================================ */
 const GAMES = [
   { id: 'flip', icon: '🤸', name: 'Flip Jump', desc: 'Carga el salto, suelta y aterriza el mortal en la siguiente plataforma.', run: gameFlip },
   { id: 'duet', icon: '☯️', name: 'Dúo Neón', desc: 'Gira las dos esferas y esquiva los bloques que caen. Un golpe y fuera.', run: gameDuet },
   { id: 'stairs', icon: '🪜', name: 'Escalera Infinita', desc: 'SUBIR sigue recto, GIRAR cambia de lado. Ni un paso al vacío y no te quedes sin energía.', run: gameStairs },
+  { id: 'tuktuk', icon: '🛺', name: 'Tuk-Tuk Rush', desc: 'Esquiva el tráfico de Bangkok con tu tuk-tuk. ¡Cuidado con los elefantes!', run: gameTuktuk },
 ];

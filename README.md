@@ -20,6 +20,7 @@ Diseño basado en el design system **"Daily Duel Neon"** del proyecto de Stitch 
 | 🤸 Flip Jump | Mantén pulsado para cargar, suelta para saltar: aterriza el salto mortal en la siguiente plataforma. Centro de la plataforma = ¡PERFECTO! con combo. Si caes, fin de la partida. |
 | ☯️ Dúo Neón | Estilo *Duet*: dos esferas (cian y rosa) orbitan un eje. Toca izquierda/derecha para girarlas y esquivar los bloques que caen (¡giran y aceleran por niveles!). +100 por bloque; un golpe y se acabó. |
 | 🪜 Escalera Infinita | Estilo *Infinite Stairs*: sube la escalera en zigzag con SUBIR (recto) y GIRAR (cambia de lado). +10 por escalón; un paso al vacío o quedarte sin energía termina la partida, y el desgaste crece con la altura. |
+| 🛺 Tuk-Tuk Rush | Esquiva el tráfico nocturno de Bangkok con tu tuk-tuk: toca izquierda/derecha para cambiar de carril entre taxis, buses, motos y elefantes 🐘, con templos y farolillos en los arcenes. +50 por vehículo; la velocidad sube por niveles (¡HORA PUNTA!, ¡A TODO GAS!). |
 
 El catálogo está pensado para crecer: añade más juegos al array `GAMES` de `js/games.js` y entran solos en la rotación diaria. Todos los minijuegos usan un **RNG determinista sembrado con la fecha**, así que el reto (distancias y anchos de plataforma) es idéntico para todos los jugadores del día.
 
