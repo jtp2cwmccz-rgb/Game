@@ -27,15 +27,6 @@ function mulberry32(seed) {
   };
 }
 
-function shuffled(arr, rng) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
 function el(tag, cls, html) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -43,536 +34,265 @@ function el(tag, cls, html) {
   return n;
 }
 
-/* barra de progreso neón (spec "Progress Bars") para los juegos con tiempo */
-function timeBar() {
-  const bar = el('div', 'progress');
-  const fill = el('div');
-  fill.style.width = '100%';
-  bar.append(fill);
-  return { bar, set(ratio) { fill.style.width = `${Math.max(0, ratio) * 100}%`; } };
-}
-
 /* ============================================================
-   1. DUELO DE REFLEJOS
+   FLIP JUMP
+   Mantén pulsado para cargar, suelta para saltar: el personaje da
+   un salto mortal hasta la siguiente plataforma. Aterriza cerca del
+   centro para un "¡PERFECTO!" con combo. Si caes, se acabó.
    ============================================================ */
-function gameReflex(stage, rng, api) {
-  const ROUNDS = 5;
-  let round = 0;
-  let total = 0;
-  let timer = null;
-  let goAt = 0;
-  let state = 'idle'; // idle | wait | go
-  const times = [];
+function gameFlip(stage, rng, api) {
+  const wrap = el('div', 'flip-wrap');
+  const canvas = el('canvas', 'flip-canvas');
+  const powerWrap = el('div', 'flip-power');
+  const powerFill = el('div', 'flip-power-fill');
+  powerWrap.append(powerFill);
+  const hint = el('p', 'stage-timer', 'MANTÉN PULSADO PARA CARGAR · SUELTA PARA SALTAR');
+  wrap.append(canvas, powerWrap, hint);
+  stage.append(wrap);
 
-  const info = el('div', 'stage-center', '');
-  const msg = el('p', 'stage-msg', 'Toca cuando el panel se ilumine en cian.<br>¡Ojo con salir antes de tiempo!');
-  const pad = el('div', 'reflex-pad', '<p class="stage-big">👆</p><p class="stage-msg">Toca para empezar</p>');
-  const prog = el('p', 'stage-timer', `RONDA 0 / ${ROUNDS}`);
-  info.append(msg, prog);
-  info.style.flex = '0 0 auto';
-  info.style.paddingBottom = '14px';
-  stage.append(info, pad);
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
 
-  function nextRound() {
-    round++;
-    if (round > ROUNDS) {
-      const avg = Math.round(times.reduce((a, b) => a + b, 0) / times.length);
-      api.finish(total, `Media de reacción: ${avg} ms`);
-      return;
-    }
-    prog.textContent = `RONDA ${round} / ${ROUNDS}`;
-    state = 'wait';
-    pad.className = 'reflex-pad wait';
-    pad.innerHTML = '<p class="stage-big">…</p><p class="stage-msg">Espera al cian</p>';
-    const delay = 1000 + rng() * 2500;
-    timer = setTimeout(() => {
-      state = 'go';
-      goAt = performance.now();
-      pad.className = 'reflex-pad go';
-      pad.innerHTML = '<p class="stage-big">⚡</p><p class="stage-msg">¡TOCA YA!</p>';
-    }, delay);
+  function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width;
+    H = Math.max(300, r.height - 70);
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   }
+  resize();
 
-  pad.addEventListener('pointerdown', () => {
-    if (api.done) return;
-    if (state === 'idle') { nextRound(); return; }
-    if (state === 'wait') {
-      clearTimeout(timer);
-      state = 'idle';
-      times.push(1000);
-      pad.className = 'reflex-pad fail';
-      pad.innerHTML = '<p class="stage-big">✕</p><p class="stage-msg">¡Demasiado pronto! (+0 pts)<br>Toca para seguir</p>';
-      return;
-    }
-    if (state === 'go') {
-      const ms = Math.round(performance.now() - goAt);
-      times.push(ms);
-      const pts = Math.max(0, 1000 - ms * 2);
-      total += pts;
-      api.setScore(total);
-      state = 'idle';
-      pad.className = 'reflex-pad';
-      pad.innerHTML = `<p class="stage-big">${ms} ms</p><p class="stage-msg">+${pts} pts · toca para seguir</p>`;
-    }
-  });
+  /* mundo */
+  const GROUND = () => H - 46;
+  const CHAR_X = () => Math.min(90, W * 0.22);   // el personaje se queda a la izquierda; el mundo se desplaza
+  const G = 1500;
+  const JUMP_VY = 560;
+  const AIRTIME = (2 * JUMP_VY) / G;
 
-  api.onQuit = () => clearTimeout(timer);
-}
+  const avatar = (typeof state !== 'undefined' && state.profile) ? state.profile.avatar : '🦊';
 
-/* ============================================================
-   2. MEMORIA NEÓN
-   ============================================================ */
-function gameMemory(stage, rng, api) {
-  const ICONS = ['⚡', '👾', '🔥', '💎', '🚀', '🌙', '🎯', '🕹️'];
-  const deck = shuffled(ICONS.concat(ICONS), rng);
-  let open = [];
-  let lock = false;
-  let moves = 0;
-  let found = 0;
-  const t0 = performance.now();
-
-  const head = el('div', 'stage-center');
-  head.style.flex = '0 0 auto';
-  const prog = el('p', 'stage-timer', 'PARES 0 / 8 · MOVIMIENTOS 0');
-  head.append(el('p', 'stage-msg', 'Encuentra los 8 pares.<br>Menos movimientos y menos tiempo = más puntos.'), prog);
-  const grid = el('div', 'mem-grid');
-  stage.append(head, grid);
-
-  deck.forEach((icon, i) => {
-    const c = el('button', 'mem-card', '');
-    c.dataset.icon = icon;
-    grid.append(c);
-    c.addEventListener('click', () => {
-      if (lock || c.classList.contains('open') || c.classList.contains('done') || api.done) return;
-      c.classList.add('open');
-      c.textContent = icon;
-      open.push(c);
-      if (open.length === 2) {
-        moves++;
-        lock = true;
-        const [a, b] = open;
-        const match = a.dataset.icon === b.dataset.icon;
-        setTimeout(() => {
-          if (match) {
-            a.classList.add('done'); b.classList.add('done');
-            a.classList.remove('open'); b.classList.remove('open');
-            found++;
-          } else {
-            a.classList.remove('open'); b.classList.remove('open');
-            a.textContent = ''; b.textContent = '';
-          }
-          open = [];
-          lock = false;
-          prog.textContent = `PARES ${found} / 8 · MOVIMIENTOS ${moves}`;
-          const secs = (performance.now() - t0) / 1000;
-          api.setScore(liveScore(secs));
-          if (found === 8) {
-            const s = liveScore(secs);
-            api.finish(s, `${moves} movimientos en ${Math.round(secs)} s`);
-          }
-        }, match ? 120 : 550);
-      }
-    });
-  });
-
-  function liveScore(secs) {
-    return Math.max(150, 3000 - Math.max(0, moves - 8) * 90 - Math.round(secs) * 18);
-  }
-}
-
-/* ============================================================
-   3. CÁLCULO RÁPIDO
-   ============================================================ */
-function gameMath(stage, rng, api) {
-  const DURATION = 45;
+  let platforms = [];   // { x, w } en coordenadas de mundo
+  let worldX = 0;       // scroll del mundo
+  let charW = 0;        // posición x del personaje en el mundo
+  let charY = 0;        // altura sobre el suelo (0 = en plataforma)
+  let vx = 0, vy = 0;
+  let flying = false;
+  let charging = false;
+  let power = 0;
+  let chargeDir = 1;
+  let flips = 1;
+  let angle = 0;
   let score = 0;
+  let landed = 0;
   let streak = 0;
-  let correct = 0;
-  let wrong = 0;
-  let left = DURATION;
-  let ticker = null;
-
-  const head = el('div', 'stage-center');
-  head.style.flex = '0 0 auto';
-  const timerP = el('p', 'stage-timer', `⏱ ${DURATION} s`);
-  const streakP = el('p', 'label-caps text-pink', 'RACHA ×0');
-  const tb = timeBar();
-  head.append(timerP, tb.bar, streakP);
-
-  const box = el('div', 'quiz-box');
-  const qP = el('p', 'quiz-q', '');
-  const opts = el('div', 'quiz-opts');
-  box.append(qP, opts);
-  stage.append(head, box);
-
-  function makeQuestion() {
-    const kind = Math.floor(rng() * 4);
-    let a, b, ans, text;
-    if (kind === 0) { a = 3 + Math.floor(rng() * 40); b = 3 + Math.floor(rng() * 40); ans = a + b; text = `${a} + ${b}`; }
-    else if (kind === 1) { a = 10 + Math.floor(rng() * 60); b = Math.floor(rng() * a); ans = a - b; text = `${a} − ${b}`; }
-    else if (kind === 2) { a = 2 + Math.floor(rng() * 11); b = 2 + Math.floor(rng() * 11); ans = a * b; text = `${a} × ${b}`; }
-    else { b = 2 + Math.floor(rng() * 9); ans = 2 + Math.floor(rng() * 10); a = ans * b; text = `${a} ÷ ${b}`; }
-    const answers = new Set([ans]);
-    while (answers.size < 4) {
-      const off = Math.floor(rng() * 10) - 5;
-      const cand = ans + (off === 0 ? 6 : off) + (rng() > 0.8 ? 10 : 0);
-      if (cand >= 0) answers.add(cand);
-    }
-    return { text, ans, options: shuffled([...answers], rng) };
-  }
-
-  function ask() {
-    const q = makeQuestion();
-    qP.textContent = q.text;
-    opts.innerHTML = '';
-    q.options.forEach(o => {
-      const b = el('button', 'quiz-opt', String(o));
-      b.addEventListener('click', () => {
-        if (api.done) return;
-        if (o === q.ans) {
-          correct++; streak++;
-          score += 100 + streak * 10;
-          b.classList.add('ok');
-        } else {
-          wrong++; streak = 0;
-          score = Math.max(0, score - 25);
-          b.classList.add('ko');
-        }
-        streakP.textContent = `RACHA ×${streak}`;
-        api.setScore(score);
-        setTimeout(ask, 130);
-      }, { once: true });
-      opts.append(b);
-    });
-  }
-
-  ticker = setInterval(() => {
-    left--;
-    timerP.textContent = `⏱ ${left} s`;
-    tb.set(left / DURATION);
-    if (left <= 0) {
-      clearInterval(ticker);
-      api.finish(score, `${correct} aciertos · ${wrong} fallos`);
-    }
-  }, 1000);
-  api.onQuit = () => clearInterval(ticker);
-  ask();
-}
-
-/* ============================================================
-   4. PALABRA OCULTA
-   ============================================================ */
-const WORD_BANK = [
-  'NEBULA', 'COMETA', 'GALAXIA', 'PLANETA', 'COHETE', 'ORBITA', 'METEORO', 'ECLIPSE',
-  'NEON', 'LASER', 'ARCADE', 'PIXEL', 'ROBOT', 'CIRCUITO', 'ENERGIA', 'TURBO',
-  'VICTORIA', 'BATALLA', 'TORNEO', 'RIVAL', 'CAMPEON', 'MEDALLA', 'TROFEO', 'RACHA',
-  'ESTRELLA', 'DESTELLO', 'RELAMPAGO', 'TORMENTA', 'VOLCAN', 'GLACIAR', 'OCEANO', 'SELVA',
-  'MISTERIO', 'ENIGMA', 'SECRETO', 'CODIGO', 'SENAL', 'RADAR', 'SONDA', 'NAVE',
-];
-
-function gameWord(stage, rng, api) {
-  const DURATION = 60;
-  const words = shuffled(WORD_BANK, rng);
-  let idx = 0;
-  let score = 0;
-  let solved = 0;
-  let left = DURATION;
-  let picked = [];
-
-  const head = el('div', 'stage-center');
-  head.style.flex = '0 0 auto';
-  const timerP = el('p', 'stage-timer', `⏱ ${DURATION} s`);
-  const tb = timeBar();
-  head.append(el('p', 'stage-msg', 'Ordena las letras y forma la palabra.'), timerP, tb.bar);
-
-  const box = el('div', 'quiz-box');
-  const answer = el('div', 'word-answer');
-  const tiles = el('div', 'word-tiles');
-  const controls = el('div', 'quiz-opts');
-  const clearB = el('button', 'btn-3d btn-ghost', 'BORRAR');
-  const skipB = el('button', 'btn-3d btn-pink', 'PASAR (−25)');
-  controls.append(clearB, skipB);
-  box.append(answer, tiles, controls);
-  stage.append(head, box);
-
-  function load() {
-    const word = words[idx % words.length];
-    picked = [];
-    answer.innerHTML = '';
-    tiles.innerHTML = '';
-    let letters = shuffled(word.split(''), rng);
-    if (letters.join('') === word) letters = letters.reverse();
-    letters.forEach((ch) => {
-      const t = el('button', 'word-tile', ch);
-      t.addEventListener('click', () => {
-        if (t.classList.contains('used') || api.done) return;
-        t.classList.add('used');
-        picked.push({ ch, tile: t });
-        const a = el('div', 'word-tile', ch);
-        answer.append(a);
-        if (picked.length === word.length) {
-          const guess = picked.map(p => p.ch).join('');
-          if (guess === word) {
-            solved++;
-            score += 150;
-            api.setScore(score);
-            idx++;
-            setTimeout(load, 220);
-          } else {
-            answer.querySelectorAll('.word-tile').forEach(n => { n.style.borderColor = 'var(--lose)'; });
-            setTimeout(reset, 450);
-          }
-        }
-      });
-      tiles.append(t);
-    });
-  }
-
-  function reset() {
-    picked = [];
-    answer.innerHTML = '';
-    tiles.querySelectorAll('.word-tile').forEach(t => t.classList.remove('used'));
-  }
-
-  clearB.addEventListener('click', reset);
-  skipB.addEventListener('click', () => {
-    if (api.done) return;
-    score = Math.max(0, score - 25);
-    api.setScore(score);
-    idx++;
-    load();
-  });
-
-  const ticker = setInterval(() => {
-    left--;
-    timerP.textContent = `⏱ ${left} s`;
-    tb.set(left / DURATION);
-    if (left <= 0) {
-      clearInterval(ticker);
-      api.finish(score, `${solved} palabras resueltas`);
-    }
-  }, 1000);
-  api.onQuit = () => clearInterval(ticker);
-  load();
-}
-
-/* ============================================================
-   5. SECUENCIA NEÓN (simon)
-   ============================================================ */
-function gameSimon(stage, rng, api) {
-  let seq = [];
-  let inputPos = 0;
-  let level = 0;
-  let score = 0;
-  let accepting = false;
-  const timeouts = [];
-
-  const head = el('div', 'stage-center');
-  head.style.flex = '0 0 auto';
-  const msg = el('p', 'stage-msg', 'Memoriza la secuencia de luces y repítela.');
-  const prog = el('p', 'stage-timer', 'NIVEL 1');
-  head.append(msg, prog);
-  const grid = el('div', 'simon-grid');
-  const pads = [];
-  for (let i = 0; i < 4; i++) {
-    const p = el('button', `simon-pad simon-${i}`, '');
-    pads.push(p);
-    grid.append(p);
-    p.addEventListener('pointerdown', () => {
-      if (!accepting || api.done) return;
-      flash(i, 220);
-      if (i === seq[inputPos]) {
-        inputPos++;
-        if (inputPos === seq.length) {
-          accepting = false;
-          score += 100 + level * 25;
-          api.setScore(score);
-          timeouts.push(setTimeout(nextLevel, 700));
-        }
-      } else {
-        accepting = false;
-        api.finish(score, `Llegaste al nivel ${level}`);
-      }
-    });
-  }
-  stage.append(head, grid);
-
-  function flash(i, dur) {
-    pads[i].classList.add('lit');
-    timeouts.push(setTimeout(() => pads[i].classList.remove('lit'), dur));
-  }
-
-  function playSeq() {
-    accepting = false;
-    seq.forEach((p, k) => {
-      timeouts.push(setTimeout(() => flash(p, 340), 600 + k * 520));
-    });
-    timeouts.push(setTimeout(() => {
-      accepting = true;
-      inputPos = 0;
-      msg.innerHTML = '¡Tu turno!';
-    }, 600 + seq.length * 520));
-  }
-
-  function nextLevel() {
-    level++;
-    prog.textContent = `NIVEL ${level}`;
-    msg.innerHTML = 'Observa…';
-    seq.push(Math.floor(rng() * 4));
-    playSeq();
-  }
-
-  api.onQuit = () => timeouts.forEach(clearTimeout);
-  nextLevel();
-}
-
-/* ============================================================
-   6. LLUVIA DE DIANAS
-   ============================================================ */
-function gameTargets(stage, rng, api) {
-  const DURATION = 30;
-  let score = 0;
-  let hits = 0;
-  let misses = 0;
-  let left = DURATION;
-  let spawner = null;
-  let ticker = null;
-
-  const head = el('div', 'stage-center');
-  head.style.flex = '0 0 auto';
-  const timerP = el('p', 'stage-timer', `⏱ ${DURATION} s`);
-  const tb = timeBar();
-  head.append(el('p', 'stage-msg', 'Revienta las dianas antes de que se encojan.'), timerP, tb.bar);
-  const arena = el('div', 'target-arena');
-  stage.append(head, arena);
-
-  arena.addEventListener('pointerdown', (e) => {
-    if (e.target === arena && !api.done) {
-      misses++;
-      score = Math.max(0, score - 10);
-      api.setScore(score);
-    }
-  });
-
-  function spawn() {
-    if (api.done) return;
-    const size = 44 + rng() * 40;
-    const life = 1400 + rng() * 900;
-    const t = el('div', 'target', '');
-    t.style.width = t.style.height = `${size}px`;
-    t.style.left = `${8 + rng() * 84}%`;
-    t.style.top = `${8 + rng() * 84}%`;
-    t.style.animationDuration = `${life}ms`;
-    const born = performance.now();
-    t.addEventListener('pointerdown', (e) => {
-      e.stopPropagation();
-      if (api.done) return;
-      const age = (performance.now() - born) / life;
-      const pts = Math.max(25, Math.round(120 - age * 95));
-      hits++;
-      score += pts;
-      api.setScore(score);
-      t.remove();
-    });
-    arena.append(t);
-    setTimeout(() => t.remove(), life);
-  }
-
-  spawner = setInterval(spawn, 650);
-  spawn();
-  ticker = setInterval(() => {
-    left--;
-    timerP.textContent = `⏱ ${left} s`;
-    tb.set(left / DURATION);
-    if (left <= 0) {
-      clearInterval(ticker);
-      clearInterval(spawner);
-      api.finish(score, `${hits} dianas · ${misses} fallos`);
-    }
-  }, 1000);
-  api.onQuit = () => { clearInterval(ticker); clearInterval(spawner); };
-}
-
-/* ============================================================
-   7. PULSO PERFECTO
-   ============================================================ */
-function gamePulse(stage, rng, api) {
-  const TRIES = 5;
-  let attempt = 0;
-  let score = 0;
+  let maxStreak = 0;
+  let over = false;
+  let popup = null;     // { text, t, color }
   let raf = null;
-  let pos = 0;
-  let dir = 1;
-  let speed = 0.9; // % por frame
-  let running = false;
+  let last = performance.now();
 
-  const center = el('div', 'stage-center');
-  const msg = el('p', 'stage-msg', 'Detén el pulso dentro de la zona verde.<br>Cuanto más al centro, más puntos.');
-  const prog = el('p', 'stage-timer', `INTENTO 1 / ${TRIES}`);
-  const track = el('div', 'pulse-track');
-  const zone = el('div', 'pulse-zone');
-  const cursor = el('div', 'pulse-cursor');
-  track.append(zone, cursor);
-  const btn = el('button', 'btn-3d btn-primary btn-block', '¡AHORA!');
-  const last = el('p', 'stats-number text-cyan', '');
-  center.append(msg, prog, track, last, btn);
-  stage.append(center);
-
-  let zoneC = 50, zoneW = 18;
-
-  function setupRound() {
-    zoneW = Math.max(7, 20 - attempt * 3);
-    zoneC = 18 + rng() * 64;
-    speed = 0.9 + attempt * 0.28;
-    zone.style.left = `${zoneC - zoneW / 2}%`;
-    zone.style.width = `${zoneW}%`;
-    pos = 0; dir = 1;
-    prog.textContent = `INTENTO ${attempt + 1} / ${TRIES}`;
-    running = true;
-    loop();
+  function addPlatform() {
+    const prev = platforms[platforms.length - 1];
+    const n = platforms.length; // dificultad progresiva y determinista
+    const gapMax = Math.min(150, W * 0.35, 46 + n * 10);
+    const gap = 40 + rng() * gapMax;
+    const w = 60 + rng() * Math.max(30, 74 - n * 2);
+    platforms.push({ x: prev.x + prev.w + gap, w });
   }
 
-  function loop() {
-    if (!running || api.done) return;
-    pos += dir * speed;
-    if (pos >= 100) { pos = 100; dir = -1; }
-    if (pos <= 0) { pos = 0; dir = 1; }
-    cursor.style.left = `calc(${pos}% - 2px)`;
-    raf = requestAnimationFrame(loop);
+  // arranque: plataforma bajo el personaje + siguientes
+  platforms.push({ x: 0, w: 110 });
+  charW = 55;
+  for (let i = 0; i < 6; i++) addPlatform();
+
+  function jumpDistFor(p) {
+    return 40 + p * (Math.min(320, W * 0.8) - 40);
   }
 
-  btn.addEventListener('click', () => {
-    if (api.done) return;
-    if (!running) { setupRound(); btn.textContent = '¡AHORA!'; return; }
-    running = false;
-    cancelAnimationFrame(raf);
-    const dist = Math.abs(pos - zoneC);
-    const inZone = dist <= zoneW / 2;
-    const pts = inZone ? Math.round(200 - (dist / (zoneW / 2)) * 110) : 0;
+  function startCharge() {
+    if (flying || over || api.done) return;
+    charging = true;
+    power = 0;
+    chargeDir = 1;
+  }
+
+  function release() {
+    if (!charging || flying || over || api.done) return;
+    charging = false;
+    flying = true;
+    flips = power > 0.72 ? 2 : 1;
+    angle = 0;
+    vy = -JUMP_VY;
+    vx = jumpDistFor(power) / AIRTIME;
+  }
+
+  canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); startCharge(); });
+  window.addEventListener('pointerup', release);
+
+  function currentPlatform() {
+    return platforms.find(p => charW >= p.x && charW <= p.x + p.w);
+  }
+
+  function fail() {
+    over = true;
+    setTimeout(() => {
+      api.finish(score, `${landed} plataformas · mejor racha ×${maxStreak}`);
+    }, 650);
+  }
+
+  function land(p) {
+    charW = Math.max(p.x + 4, Math.min(p.x + p.w - 4, charW));
+    charY = 0; vy = 0; vx = 0;
+    flying = false;
+    angle = 0;
+    landed++;
+    const center = p.x + p.w / 2;
+    const perfect = Math.abs(charW - center) < p.w * 0.18;
+    let pts = 100;
+    if (perfect) {
+      streak++;
+      maxStreak = Math.max(maxStreak, streak);
+      pts += 50 * streak;
+      popup = { text: `¡PERFECTO! ×${streak}`, t: 1, color: '#00f4fe' };
+    } else {
+      streak = 0;
+      popup = { text: '+100', t: 1, color: '#ebb2ff' };
+    }
     score += pts;
     api.setScore(score);
-    last.textContent = inZone ? `+${pts} pts 🎯` : 'Fuera de zona · +0';
-    attempt++;
-    if (attempt >= TRIES) {
-      api.finish(score, `${TRIES} pulsos lanzados`);
-    } else {
-      btn.textContent = 'SIGUIENTE PULSO';
-    }
-  });
+    addPlatform();
+  }
 
-  api.onQuit = () => cancelAnimationFrame(raf);
-  setupRound();
+  function step(dt) {
+    if (charging) {
+      power += chargeDir * dt / 0.85;
+      if (power >= 1) { power = 1; chargeDir = -1; }
+      if (power <= 0) { power = 0; chargeDir = 1; }
+    }
+    powerFill.style.width = `${power * 100}%`;
+
+    if (flying) {
+      charW += vx * dt;
+      vy += G * dt;
+      charY -= vy * dt;
+      angle += (Math.PI * 2 * flips / AIRTIME) * dt;
+      if (!over && charY <= 0 && vy > 0) {
+        const p = platforms.find(pl => charW >= pl.x - 6 && charW <= pl.x + pl.w + 6);
+        if (p) { charY = 0; land(p); }
+        // sin plataforma debajo: sigue cayendo al vacío
+      }
+      if (!over && charY < -40) fail();
+    }
+
+    // cámara: sigue al personaje
+    const target = charW - CHAR_X();
+    worldX += (target - worldX) * Math.min(1, dt * 8);
+
+    if (popup) {
+      popup.t -= dt;
+      if (popup.t <= 0) popup = null;
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // rejilla neón de fondo
+    ctx.strokeStyle = 'rgba(235,178,255,0.06)';
+    ctx.lineWidth = 1;
+    const gs = 40;
+    const gx = -(worldX % gs);
+    for (let x = gx; x < W; x += gs) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for (let y = 0; y < H; y += gs) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    // plataformas
+    const gy = GROUND();
+    platforms.forEach(p => {
+      const sx = p.x - worldX;
+      if (sx > W || sx + p.w < -20) return;
+      ctx.fillStyle = '#171f33';
+      ctx.strokeStyle = '#00f4fe';
+      ctx.lineWidth = 2;
+      ctx.shadowColor = '#00f4fe';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.roundRect(sx, gy, p.w, 14, 7);
+      ctx.fill();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      // zona perfecta
+      ctx.fillStyle = 'rgba(0,244,254,0.35)';
+      const pz = p.w * 0.36;
+      ctx.beginPath();
+      ctx.roundRect(sx + (p.w - pz) / 2, gy, pz, 4, 2);
+      ctx.fill();
+    });
+
+    // personaje (emoji con rotación de salto mortal)
+    const cx = charW - worldX;
+    const cy = gy - 16 - charY;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(flying ? -angle : 0);
+    ctx.font = '30px serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = '#ebb2ff';
+    ctx.shadowBlur = 14;
+    ctx.fillText(avatar, 0, 0);
+    ctx.restore();
+
+    // popup de puntos
+    if (popup) {
+      ctx.font = '700 20px Lexend, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = popup.color;
+      ctx.globalAlpha = Math.max(0, popup.t);
+      ctx.shadowColor = popup.color;
+      ctx.shadowBlur = 16;
+      ctx.fillText(popup.text, W / 2, H * 0.3 - (1 - popup.t) * 30);
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
+    }
+
+    // aviso de caída
+    if (over) {
+      ctx.font = '800 34px Lexend, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ff5470';
+      ctx.shadowColor = '#ff5470';
+      ctx.shadowBlur = 20;
+      ctx.fillText('¡CAÍSTE!', W / 2, H * 0.4);
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  function loop(now) {
+    if (api.done) return;
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    step(dt);
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+  raf = requestAnimationFrame(loop);
+
+  api.onQuit = () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener('pointerup', release);
+  };
 }
 
 /* ============================================================
    Catálogo — la rotación diaria escoge uno por fecha
    ============================================================ */
 const GAMES = [
-  { id: 'reflex',  icon: '⚡', name: 'Duelo de Reflejos', desc: 'Toca al instante cuando el panel se encienda. 5 rondas.', run: gameReflex },
-  { id: 'memory',  icon: '🧠', name: 'Memoria Neón',      desc: 'Encuentra los 8 pares en el menor tiempo posible.', run: gameMemory },
-  { id: 'math',    icon: '➗', name: 'Cálculo Rápido',    desc: '45 segundos de operaciones a toda velocidad.', run: gameMath },
-  { id: 'word',    icon: '🔤', name: 'Palabra Oculta',    desc: 'Reordena las letras y descubre la palabra.', run: gameWord },
-  { id: 'simon',   icon: '🎼', name: 'Secuencia Neón',    desc: 'Repite la secuencia de luces. Cada nivel crece.', run: gameSimon },
-  { id: 'targets', icon: '🎯', name: 'Lluvia de Dianas',  desc: 'Revienta todas las dianas que puedas en 30 s.', run: gameTargets },
-  { id: 'pulse',   icon: '💓', name: 'Pulso Perfecto',    desc: 'Frena el cursor en plena zona verde. 5 intentos.', run: gamePulse },
+  { id: 'flip', icon: '🤸', name: 'Flip Jump', desc: 'Carga el salto, suelta y aterriza el mortal en la siguiente plataforma.', run: gameFlip },
 ];

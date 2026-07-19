@@ -13,19 +13,13 @@ Diseño basado en el design system **"Daily Duel Neon"** del proyecto de Stitch 
    - **Duelo pasa-y-juega**: tú y un amigo jugáis el mismo reto en el mismo móvil, con tarjeta VS y ganador.
    - **Códigos de resultado**: copia tu código `DDB1.…`, envíaselo a tus amigos por chat, y pega los suyos para montar la clasificación del día, de la semana y total.
 
-## Minijuegos en rotación (7)
+## Minijuegos
 
 | Juego | Descripción |
 |---|---|
-| ⚡ Duelo de Reflejos | Toca al instante cuando el panel se ilumina (5 rondas) |
-| 🧠 Memoria Neón | Encuentra los 8 pares en el menor tiempo |
-| ➗ Cálculo Rápido | 45 s de operaciones contrarreloj con racha |
-| 🔤 Palabra Oculta | Reordena letras y forma palabras (60 s) |
-| 🎼 Secuencia Neón | Repite la secuencia de luces estilo Simon |
-| 🎯 Lluvia de Dianas | Revienta dianas que se encogen (30 s) |
-| 💓 Pulso Perfecto | Frena el cursor en la zona verde (5 intentos) |
+| 🤸 Flip Jump | Mantén pulsado para cargar, suelta para saltar: aterriza el salto mortal en la siguiente plataforma. Centro de la plataforma = ¡PERFECTO! con combo. Si caes, fin de la partida. |
 
-Todos los minijuegos usan un **RNG determinista sembrado con la fecha**, así que el reto es idéntico para todos los jugadores del día.
+El catálogo está pensado para crecer: añade más juegos al array `GAMES` de `js/games.js` y entran solos en la rotación diaria. Todos los minijuegos usan un **RNG determinista sembrado con la fecha**, así que el reto (distancias y anchos de plataforma) es idéntico para todos los jugadores del día.
 
 ## El Tablero 🎲 (estilo la oca)
 
