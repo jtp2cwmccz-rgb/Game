@@ -18,6 +18,7 @@ Diseño basado en el design system **"Daily Duel Neon"** del proyecto de Stitch 
 | Juego | Descripción |
 |---|---|
 | 🤸 Flip Jump | Mantén pulsado para cargar, suelta para saltar: aterriza el salto mortal en la siguiente plataforma. Centro de la plataforma = ¡PERFECTO! con combo. Si caes, fin de la partida. |
+| ☯️ Dúo Neón | Estilo *Duet*: dos esferas (cian y rosa) orbitan un eje. Toca izquierda/derecha para girarlas y esquivar los bloques que caen. +100 por bloque esquivado; un golpe y se acabó. |
 
 El catálogo está pensado para crecer: añade más juegos al array `GAMES` de `js/games.js` y entran solos en la rotación diaria. Todos los minijuegos usan un **RNG determinista sembrado con la fecha**, así que el reto (distancias y anchos de plataforma) es idéntico para todos los jugadores del día.
 

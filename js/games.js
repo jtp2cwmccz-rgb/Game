@@ -291,8 +291,222 @@ function gameFlip(stage, rng, api) {
 }
 
 /* ============================================================
+   DÚO NEÓN (estilo Duet)
+   Dos esferas orbitan un eje. Toca la mitad izquierda o derecha de
+   la pantalla para girarlas y esquiva los bloques que caen. Un
+   golpe y se acabó.
+   ============================================================ */
+function gameDuet(stage, rng, api) {
+  const wrap = el('div', 'flip-wrap');
+  const canvas = el('canvas', 'flip-canvas');
+  const hint = el('p', 'stage-timer', 'TOCA IZQUIERDA / DERECHA PARA GIRAR');
+  wrap.append(canvas, hint);
+  stage.append(wrap);
+
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
+
+  (function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width;
+    H = Math.max(340, r.height - 40);
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  })();
+
+  const CX = W / 2;
+  const ORBIT = Math.min(80, W * 0.23);
+  const CY = H - ORBIT - 46;
+  const ORB = 11;
+  const SPIN = 4.4;               // rad/s
+  const CYAN = '#00f4fe', PINK = '#ff007a';
+
+  let angle = 0;                  // esferas empiezan en horizontal
+  let dir = 0;                    // -1 izquierda, +1 derecha
+  let obstacles = [];             // { x, w, y, h, counted }
+  let trail = [];
+  let t = 0;
+  let untilSpawn = 0.6;
+  let score = 0;
+  let passed = 0;
+  let over = false;
+  let hitAt = null;               // { x, y, color }
+  let raf = null;
+  let last = performance.now();
+
+  /* patrones esquivables: pared izquierda/derecha (esferas en vertical),
+     bloque central ancho o estrecho (esferas en horizontal), o laterales dobles */
+  function spawn() {
+    const kind = Math.floor(rng() * 5);
+    const h = 26;
+    const y = -h - 10;
+    if (kind === 0) {
+      obstacles.push({ x: CX - ORBIT * 0.75, w: ORBIT * 1.5, y, h, counted: false });
+    } else if (kind === 1) {
+      obstacles.push({ x: 0, w: CX - ORBIT * 0.4, y, h, counted: false });
+    } else if (kind === 2) {
+      obstacles.push({ x: CX + ORBIT * 0.4, w: W - (CX + ORBIT * 0.4), y, h, counted: false });
+    } else if (kind === 3) {
+      obstacles.push({ x: CX - 24, w: 48, y, h, counted: false });
+    } else {
+      const gap = ORBIT * 1.15;
+      obstacles.push({ x: 0, w: CX - gap / 2, y, h, counted: false });
+      obstacles.push({ x: CX + gap / 2, w: W - (CX + gap / 2), y, h, counted: true }); // solo puntúa una del par
+    }
+  }
+
+  function orbPos(k) { // k = 0 | 1
+    const a = angle + k * Math.PI;
+    return { x: CX + Math.cos(a) * ORBIT, y: CY + Math.sin(a) * ORBIT };
+  }
+
+  function hitTest(o, p) {
+    const nx = Math.max(o.x, Math.min(p.x, o.x + o.w));
+    const ny = Math.max(o.y, Math.min(p.y, o.y + o.h));
+    return (p.x - nx) ** 2 + (p.y - ny) ** 2 < ORB * ORB;
+  }
+
+  function setDir(clientX) {
+    const r = canvas.getBoundingClientRect();
+    dir = clientX < r.left + r.width / 2 ? -1 : 1;
+  }
+  canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); setDir(e.clientX); });
+  canvas.addEventListener('pointermove', (e) => { if (dir !== 0) setDir(e.clientX); });
+  const stop = () => { dir = 0; };
+  window.addEventListener('pointerup', stop);
+  const onKey = (e) => {
+    if (e.type === 'keydown') {
+      if (e.key === 'ArrowLeft') dir = -1;
+      if (e.key === 'ArrowRight') dir = 1;
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') dir = 0;
+  };
+  window.addEventListener('keydown', onKey);
+  window.addEventListener('keyup', onKey);
+
+  function step(dt) {
+    if (over) return;
+    t += dt;
+    angle += dir * SPIN * dt;
+
+    const speed = 170 + t * 7;
+    untilSpawn -= dt;
+    if (untilSpawn <= 0) {
+      spawn();
+      untilSpawn = Math.max(0.85, 1.55 - t * 0.012) + rng() * 0.25;
+    }
+
+    const p0 = orbPos(0), p1 = orbPos(1);
+    trail.push([p0.x, p0.y, p1.x, p1.y]);
+    if (trail.length > 14) trail.shift();
+
+    for (const o of obstacles) {
+      o.y += speed * dt;
+      if (!o.counted && o.y > CY + ORBIT + ORB) {
+        o.counted = true;
+        passed++;
+        score += 100;
+        api.setScore(score);
+      }
+      if (hitTest(o, p0)) { hitAt = { ...p0, color: CYAN }; }
+      else if (hitTest(o, p1)) { hitAt = { ...p1, color: PINK }; }
+      if (hitAt) break;
+    }
+    obstacles = obstacles.filter(o => o.y < H + 60);
+
+    if (hitAt) {
+      over = true;
+      setTimeout(() => api.finish(score, `${passed} bloques esquivados`), 700);
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // órbita guía
+    ctx.strokeStyle = 'rgba(218,226,253,0.12)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(CX, CY, ORBIT, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // bloques
+    for (const o of obstacles) {
+      ctx.fillStyle = '#dae2fd';
+      ctx.shadowColor = '#dae2fd';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.roundRect(o.x, o.y, o.w, o.h, 6);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    // estelas
+    trail.forEach(([x0, y0, x1, y1], i) => {
+      const a = (i / trail.length) * 0.35;
+      ctx.globalAlpha = a;
+      ctx.fillStyle = CYAN;
+      ctx.beginPath(); ctx.arc(x0, y0, ORB * 0.7, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = PINK;
+      ctx.beginPath(); ctx.arc(x1, y1, ORB * 0.7, 0, Math.PI * 2); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
+    // esferas
+    const p0 = orbPos(0), p1 = orbPos(1);
+    [[p0, CYAN], [p1, PINK]].forEach(([p, c]) => {
+      ctx.fillStyle = c;
+      ctx.shadowColor = c;
+      ctx.shadowBlur = 18;
+      ctx.beginPath(); ctx.arc(p.x, p.y, ORB, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+    });
+
+    // impacto: salpicadura y aviso
+    if (hitAt) {
+      ctx.fillStyle = hitAt.color;
+      ctx.globalAlpha = 0.85;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.arc(hitAt.x + Math.cos(a) * 16, hitAt.y + Math.sin(a) * 16, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      ctx.font = '800 34px Lexend, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ff5470';
+      ctx.shadowColor = '#ff5470';
+      ctx.shadowBlur = 20;
+      ctx.fillText('¡TOCADO!', W / 2, H * 0.35);
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  function loop(now) {
+    if (api.done) return;
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    step(dt);
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+  raf = requestAnimationFrame(loop);
+
+  api.onQuit = () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener('pointerup', stop);
+    window.removeEventListener('keydown', onKey);
+    window.removeEventListener('keyup', onKey);
+  };
+}
+
+/* ============================================================
    Catálogo — la rotación diaria escoge uno por fecha
    ============================================================ */
 const GAMES = [
   { id: 'flip', icon: '🤸', name: 'Flip Jump', desc: 'Carga el salto, suelta y aterriza el mortal en la siguiente plataforma.', run: gameFlip },
+  { id: 'duet', icon: '☯️', name: 'Dúo Neón', desc: 'Gira las dos esferas y esquiva los bloques que caen. Un golpe y fuera.', run: gameDuet },
 ];
