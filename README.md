@@ -25,7 +25,7 @@ El catálogo está pensado para crecer: añade más juegos al array `GAMES` de `
 
 Cada victoria mueve tu ficha en un tablero de 40 casillas en serpiente:
 
-- Completar el reto diario → avanzas **1–6 casillas** según tu puntuación (500 pts ≈ 1 casilla; solo la primera partida del día).
+- Cada partida del reto diario → avanzas **1–6 casillas** según tu puntuación (500 pts ≈ 1 casilla).
 - Ganar un duelo → **+3 casillas**.
 - Pegar el código de un amigo → su ficha también avanza.
 - 🌀 **Portal turbo** (casillas 6, 12, 18, 24, 30, 36): saltas al siguiente portal, "de oca a oca".

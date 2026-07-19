@@ -406,26 +406,17 @@ function playDaily() {
         state.results[dateKey] = { gameId: game.id, score, detail, at: Date.now() };
         saveState();
       }
-      // el tablero acredita tu mejor marca del día: si mejora y vale
-      // más casillas, la ficha avanza la diferencia
+      // cada partida terminada es una "tirada": la ficha siempre avanza
+      // según los puntos conseguidos (500 pts ≈ 1 casilla, 1-6)
       initBoard();
-      const best = Math.max(score, prev ? prev.score : 0);
-      const already = appliedSquares(dateKey, '@me');
-      const total = squaresForScore(best);
-      let moved = 0;
-      if (total > already) {
-        moved = total - already;
-        setApplied(dateKey, '@me', total);
-        boardAdvance('@me', state.profile.name, state.profile.avatar, moved, 'Reto diario');
-      }
-      checkBadges();
+      const moved = squaresForScore(score);
       showResult({
         label: game.name.toUpperCase(),
         title: isRecord ? '¡NUEVA MARCA!' : 'COMPLETADO',
         mood: isRecord ? 'win' : 'neutral',
         score,
         detail: detail
-          + (moved ? ` · 🎲 Tu ficha avanza ${moved} casilla${moved > 1 ? 's' : ''}` : '')
+          + ` · 🎲 Tu ficha avanza ${moved} casilla${moved > 1 ? 's' : ''}`
           + (prev && !isRecord ? ` · Tu mejor: ${prev.score}` : ''),
         actions: [
           ['COMPARTIR RESULTADO', 'btn-cyan', () => { goto('duel'); }],
@@ -433,6 +424,9 @@ function playDaily() {
           ['CERRAR', 'btn-ghost', () => { renderHome(); }],
         ],
       });
+      // después del modal: si este avance gana la temporada, su modal de META reemplaza al de resultado
+      boardAdvance('@me', state.profile.name, state.profile.avatar, moved, 'Reto diario');
+      checkBadges();
       renderHome();
     },
   });
