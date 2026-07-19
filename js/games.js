@@ -555,9 +555,214 @@ function gameDuet(stage, rng, api) {
 }
 
 /* ============================================================
+   ESCALERA INFINITA (estilo Infinite Stairs)
+   Sube la escalera en zigzag: SUBIR avanza en tu dirección,
+   GIRAR cambia de lado y sube. Un paso al vacío o quedarte sin
+   energía termina la partida. El desgaste crece con la altura.
+   ============================================================ */
+function gameStairs(stage, rng, api) {
+  const wrap = el('div', 'flip-wrap');
+  const canvas = el('canvas', 'flip-canvas');
+  const powerWrap = el('div', 'flip-power');
+  const powerFill = el('div', 'flip-power-fill');
+  powerWrap.append(powerFill);
+  const controls = el('div', 'stairs-controls');
+  const btnTurn = el('button', 'btn-3d btn-pink', '⟲ GIRAR');
+  const btnUp = el('button', 'btn-3d btn-cyan', '⬆ SUBIR');
+  controls.append(btnTurn, btnUp);
+  wrap.append(canvas, powerWrap, controls);
+  stage.append(wrap);
+
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
+
+  (function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width;
+    H = Math.max(300, r.height - 128);
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  })();
+
+  const U = Math.min(46, W * 0.13);   // paso horizontal
+  const SH = U * 0.62;                // alto de cada escalón
+  const avatar = (typeof state !== 'undefined' && state.profile) ? state.profile.avatar : '🦊';
+  const CYAN = '#00f4fe', PINK = '#ff007a';
+
+  /* dirección del tramo i→i+1, generada perezosamente con la semilla diaria */
+  const dirs = [];
+  function dirAt(i) {
+    while (dirs.length <= i) {
+      const prev = dirs.length ? dirs[dirs.length - 1] : (rng() < 0.5 ? -1 : 1);
+      dirs.push(rng() < 0.42 ? -prev : prev);
+    }
+    return dirs[i];
+  }
+
+  /* posiciones de los escalones en el mundo */
+  const pos = [{ x: 0, y: 0 }];
+  function posAt(i) {
+    while (pos.length <= i) {
+      const k = pos.length - 1;
+      pos.push({ x: pos[k].x + dirAt(k) * U, y: pos[k].y - SH });
+    }
+    return pos[i];
+  }
+
+  let idx = 0;
+  let facing = dirAt(0);              // empiezas mirando al primer tramo
+  let energy = 100;
+  let steps = 0;
+  let score = 0;
+  let over = false;
+  let deathMsg = '';
+  let fall = null;                    // { x, y, vy }
+  let cam = { x: 0, y: 0 };
+  let raf = null;
+  let last = performance.now();
+
+  function die(msg) {
+    if (over) return;
+    over = true;
+    deathMsg = msg;
+    setTimeout(() => api.finish(score, `${steps} escalones subidos`), 850);
+  }
+
+  function move(turn) {
+    if (over || api.done) return;
+    if (turn) facing = -facing;
+    if (facing === dirAt(idx)) {
+      idx++;
+      posAt(idx);
+      steps++;
+      score += 10;
+      api.setScore(score);
+      energy = Math.min(100, energy + 9);
+    } else {
+      // paso al vacío
+      const p = posAt(idx);
+      fall = { x: p.x + facing * U, y: p.y, vy: -140 };
+      die('¡AL VACÍO!');
+    }
+  }
+
+  btnUp.addEventListener('pointerdown', (e) => { e.preventDefault(); move(false); });
+  btnTurn.addEventListener('pointerdown', (e) => { e.preventDefault(); move(true); });
+  const onKey = (e) => {
+    if (e.repeat) return;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === ' ') move(false);
+    if (e.key === 'ArrowLeft') move(true);
+  };
+  window.addEventListener('keydown', onKey);
+
+  function step(dt) {
+    if (!over) {
+      // el desgaste crece con la altura: cada vez hay que subir más rápido
+      energy -= dt * (9 + steps * 0.045);
+      if (energy <= 0) { energy = 0; die('¡SIN ENERGÍA!'); }
+    }
+    powerFill.style.width = `${energy}%`;
+    if (fall) {
+      fall.vy += 1500 * dt;
+      fall.y += fall.vy * dt;
+    }
+    const target = fall || posAt(idx);
+    cam.x += (target.x - cam.x) * Math.min(1, dt * 10);
+    cam.y += (target.y - cam.y) * Math.min(1, dt * 10);
+  }
+
+  function toScreen(p) {
+    return { x: W / 2 + (p.x - cam.x), y: H * 0.62 + (p.y - cam.y) };
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // escalones visibles
+    for (let i = Math.max(0, idx - 8); i <= idx + 14; i++) {
+      const s = toScreen(posAt(i));
+      if (s.y < -30 || s.y > H + 30) continue;
+      ctx.fillStyle = '#171f33';
+      ctx.strokeStyle = i === idx ? CYAN : 'rgba(0,244,254,0.55)';
+      ctx.lineWidth = i === idx ? 2.5 : 1.5;
+      ctx.shadowColor = CYAN;
+      ctx.shadowBlur = i === idx ? 14 : 7;
+      ctx.beginPath();
+      ctx.roundRect(s.x - U * 0.46, s.y, U * 0.92, 13, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+
+    // personaje (o cayendo)
+    const cp = fall ? toScreen(fall) : toScreen(posAt(idx));
+    ctx.save();
+    ctx.translate(cp.x, cp.y - 17);
+    if (fall) ctx.rotate((fall.vy / 900) * 0.8);
+    ctx.font = '28px serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = '#ebb2ff';
+    ctx.shadowBlur = 14;
+    ctx.fillText(avatar, 0, 0);
+    ctx.restore();
+
+    // flecha de dirección actual
+    if (!over) {
+      ctx.fillStyle = facing === dirAt(idx) ? CYAN : PINK;
+      ctx.shadowColor = ctx.fillStyle;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      const ax = cp.x + facing * 24, ay = cp.y - 34;
+      ctx.moveTo(ax, ay - 6);
+      ctx.lineTo(ax + facing * 10, ay);
+      ctx.lineTo(ax, ay + 6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    // altura
+    ctx.font = '700 13px Space Grotesk, monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(218,226,253,0.55)';
+    ctx.fillText(`ALTURA ${steps}`, 12, 22);
+
+    if (over && deathMsg) {
+      ctx.font = '800 32px Lexend, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ff5470';
+      ctx.shadowColor = '#ff5470';
+      ctx.shadowBlur = 20;
+      ctx.fillText(deathMsg, W / 2, H * 0.32);
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  function loop(now) {
+    if (api.done) return;
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    step(dt);
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+  raf = requestAnimationFrame(loop);
+
+  api.onQuit = () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener('keydown', onKey);
+  };
+}
+
+/* ============================================================
    Catálogo — la rotación diaria escoge uno por fecha
    ============================================================ */
 const GAMES = [
   { id: 'flip', icon: '🤸', name: 'Flip Jump', desc: 'Carga el salto, suelta y aterriza el mortal en la siguiente plataforma.', run: gameFlip },
   { id: 'duet', icon: '☯️', name: 'Dúo Neón', desc: 'Gira las dos esferas y esquiva los bloques que caen. Un golpe y fuera.', run: gameDuet },
+  { id: 'stairs', icon: '🪜', name: 'Escalera Infinita', desc: 'SUBIR sigue recto, GIRAR cambia de lado. Ni un paso al vacío y no te quedes sin energía.', run: gameStairs },
 ];

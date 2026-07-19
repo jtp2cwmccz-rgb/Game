@@ -568,6 +568,11 @@ body {
   box-shadow: 0 0 12px rgba(188, 19, 254, 0.6);
 }
 .flip-wrap .stage-timer { text-align: center; }
+.stairs-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
 
 .progress {
   height: 10px; width: 100%;
