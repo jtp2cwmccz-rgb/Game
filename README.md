@@ -27,10 +27,22 @@ Diseño basado en el design system **"Daily Duel Neon"** del proyecto de Stitch 
 
 Todos los minijuegos usan un **RNG determinista sembrado con la fecha**, así que el reto es idéntico para todos los jugadores del día.
 
+## El Tablero 🎲 (estilo la oca)
+
+Cada victoria mueve tu ficha en un tablero de 40 casillas en serpiente:
+
+- Completar el reto diario → avanzas **1–6 casillas** según tu puntuación (500 pts ≈ 1 casilla; solo la primera partida del día).
+- Ganar un duelo → **+3 casillas**.
+- Pegar el código de un amigo → su ficha también avanza.
+- 🌀 **Portal turbo** (casillas 6, 12, 18, 24, 30, 36): saltas al siguiente portal, "de oca a oca".
+- 🕳️ **Agujero negro** (9, 21, 33): retrocedes 3.
+- 🏁 **Meta** (casilla 40): ganas la temporada, insignia para el vencedor y el tablero se reinicia.
+
 ## Pantallas
 
 - **Inicio** — reto de hoy, cuenta atrás, racha 🔥, mini-ranking y próximos retos.
 - **Sala de Duelo** — tarjeta VS, duelo pasa-y-juega, compartir/importar códigos, historial.
+- **Tablero** — la carrera estilo oca con las fichas de todos los jugadores.
 - **Clasificación** — pódium con medallas (hoy / semana / total).
 - **Perfil** — estadísticas, insignias desbloqueables y actividad reciente.
 

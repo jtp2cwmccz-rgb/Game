@@ -134,6 +134,31 @@
     </section>
   </main>
 
+  <!-- ============ BOARD (estilo oca) ============ -->
+  <main id="view-board" class="view">
+    <header class="page-head">
+      <h1 class="page-title">El Tablero</h1>
+      <p class="page-sub" id="board-sub">Temporada 1 · Meta: casilla 40</p>
+    </header>
+
+    <section class="section">
+      <div class="board-grid" id="board-grid"></div>
+    </section>
+
+    <section class="section">
+      <div class="card glass board-legend">
+        <p class="label-caps text-muted">CÓMO FUNCIONA</p>
+        <p class="hint">Al completar el reto diario avanzas <b>1–6 casillas</b> según tu puntuación (500 pts ≈ 1 casilla). Ganar un duelo da <b>+3</b>. Los amigos avanzan al pegar sus códigos.</p>
+        <p class="hint">🌀 <b>Portal turbo</b>: saltas al siguiente portal · 🕳️ <b>Agujero negro</b>: retrocedes 3 · 🏁 <b>Meta</b>: ¡ganas la temporada y el tablero se reinicia!</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><p class="label-caps text-muted">ÚLTIMOS MOVIMIENTOS</p></div>
+      <div id="board-log" class="stack"></div>
+    </section>
+  </main>
+
   <!-- ============ LEADERBOARD ============ -->
   <main id="view-rank" class="view">
     <header class="page-head">
@@ -196,6 +221,10 @@
     <button class="nav-btn" data-goto="duel">
       <svg viewBox="0 0 24 24"><path d="M14.5 3 21 9.5l-2 2L12.5 5zM5 12.5 11.5 19l-2 2L3 14.5zM3 9.5 9.5 3l11 11L14 20.5z" opacity=".9"/></svg>
       <span>Duelo</span>
+    </button>
+    <button class="nav-btn" data-goto="board">
+      <svg viewBox="0 0 24 24"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2m3 3.5A1.5 1.5 0 1 0 9.5 8 1.5 1.5 0 0 0 8 6.5m8 0A1.5 1.5 0 1 0 17.5 8 1.5 1.5 0 0 0 16 6.5m-4 4A1.5 1.5 0 1 0 13.5 12 1.5 1.5 0 0 0 12 10.5m-4 4A1.5 1.5 0 1 0 9.5 16 1.5 1.5 0 0 0 8 14.5m8 0A1.5 1.5 0 1 0 17.5 16 1.5 1.5 0 0 0 16 14.5"/></svg>
+      <span>Tablero</span>
     </button>
     <button class="nav-btn" data-goto="rank">
       <svg viewBox="0 0 24 24"><path d="M4 21v-8h4v8zm6 0V6h4v15zm6 0v-11h4v11z"/></svg>

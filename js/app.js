@@ -46,6 +46,7 @@ const DEFAULT_STATE = {
   friends: {},      // dateKey -> [ { name, avatar, score } ]
   duels: [],        // { date, gameId, me, foe, myScore, foeScore }
   badges: [],       // ids ganados
+  board: null,      // tablero estilo oca (se crea en initBoard)
 };
 
 let state = loadState();
@@ -85,6 +86,7 @@ const BADGES = [
   { id: 'duelist', icon: '⚔️', name: '5 duelos',      test: (s) => s.duels.length >= 5 },
   { id: 'champ',   icon: '🏆', name: '3 victorias',   test: (s) => s.duels.filter(d => d.myScore > d.foeScore).length >= 3 },
   { id: 'points',  icon: '💎', name: '10K puntos',    test: (s) => totalPoints(s) >= 10000 },
+  { id: 'goal',    icon: '🏁', name: 'Meta alcanzada', test: (s) => !!(s.board && s.board.winners.some(w => w.key === '@me')) },
 ];
 
 function totalPoints(s) {
@@ -101,8 +103,154 @@ function checkBadges() {
   saveState();
 }
 
+/* ============================================================
+   TABLERO estilo oca
+   Cada victoria mueve tu ficha; casillas especiales al estilo
+   "de oca a oca": portales que saltan y agujeros que retroceden.
+   ============================================================ */
+const BOARD_SIZE = 40;
+const BOARD_TURBO = [6, 12, 18, 24, 30, 36];  // 🌀 salta al siguiente portal
+const BOARD_HOLES = [9, 21, 33];              // 🕳️ retrocede 3
+
+function squaresForScore(score) {
+  return Math.max(1, Math.min(6, Math.round(score / 500)));
+}
+
+function initBoard() {
+  if (!state.board) {
+    state.board = { season: 1, positions: {}, log: [], winners: [], replayed: false };
+  }
+  ensurePlayer('@me', state.profile.name, state.profile.avatar);
+  if (!state.board.replayed) {
+    // reconstruir el tablero a partir del historial ya jugado
+    Object.entries(state.results)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .forEach(([, r]) => boardAdvance('@me', state.profile.name, state.profile.avatar, squaresForScore(r.score), 'Reto diario', true));
+    Object.values(state.friends).forEach(list => list.forEach(f =>
+      boardAdvance(f.name.toLowerCase(), f.name, f.avatar, squaresForScore(f.score), 'Código importado', true)));
+    state.duels.forEach(d => {
+      if (d.myScore > d.foeScore) boardAdvance('@me', state.profile.name, state.profile.avatar, 3, 'Duelo ganado', true);
+      else if (d.foeScore > d.myScore) boardAdvance(d.foe.toLowerCase(), d.foe, '👾', 3, 'Duelo ganado', true);
+    });
+    state.board.replayed = true;
+  }
+  saveState();
+}
+
+function ensurePlayer(key, name, avatar) {
+  const p = state.board.positions[key] || { pos: 0 };
+  p.name = name;
+  p.avatar = avatar;
+  state.board.positions[key] = p;
+  return p;
+}
+
+function boardAdvance(key, name, avatar, n, reason, silent = false) {
+  const p = ensurePlayer(key, name, avatar);
+  let pos = p.pos + n;
+  let extra = '';
+
+  if (pos >= BOARD_SIZE) {
+    // 🏁 meta: gana la temporada y el tablero se reinicia
+    state.board.winners.push({ key, name, season: state.board.season, at: Date.now() });
+    state.board.log.unshift({ name, avatar, text: `🏁 ¡${name} gana la temporada ${state.board.season}!`, at: Date.now() });
+    state.board.season++;
+    Object.values(state.board.positions).forEach(x => { x.pos = 0; });
+    saveState();
+    if (!silent) {
+      showResult({
+        label: `TEMPORADA ${state.board.season - 1}`,
+        title: key === '@me' ? '¡META! 🏁' : `¡GANA ${name.toUpperCase()}!`,
+        mood: key === '@me' ? 'win' : 'lose',
+        score: null,
+        detail: `${name} llegó a la casilla ${BOARD_SIZE}. Empieza la temporada ${state.board.season}: todas las fichas vuelven a la salida.`,
+        actions: [['VER TABLERO', 'btn-primary', () => goto('board')]],
+      });
+    }
+    return;
+  }
+
+  if (BOARD_TURBO.includes(pos)) {
+    const next = BOARD_TURBO.find(t => t > pos) || BOARD_SIZE - 1;
+    extra = ` 🌀 ¡portal! salta a la ${next}`;
+    pos = next;
+  } else if (BOARD_HOLES.includes(pos)) {
+    pos = Math.max(0, pos - 3);
+    extra = ` 🕳️ agujero negro, retrocede a la ${pos}`;
+  }
+
+  p.pos = pos;
+  state.board.log.unshift({ name, avatar, text: `${avatar} ${name}: +${n} (${reason})${extra} → casilla ${pos}`, at: Date.now() });
+  state.board.log = state.board.log.slice(0, 20);
+  saveState();
+  if (!silent) toast(`🎲 +${n} casillas${extra ? ' ·' + extra : ''} → casilla ${pos}`);
+}
+
+function renderBoard() {
+  initBoard();
+  $('#board-sub').textContent = `Temporada ${state.board.season} · Meta: casilla ${BOARD_SIZE}`;
+
+  const grid = $('#board-grid');
+  grid.innerHTML = '';
+  const byPos = {};
+  Object.entries(state.board.positions).forEach(([key, p]) => {
+    (byPos[p.pos] = byPos[p.pos] || []).push({ ...p, me: key === '@me' });
+  });
+
+  for (let s = 1; s <= BOARD_SIZE; s++) {
+    const cell = document.createElement('div');
+    const idx = s - 1;
+    const row = Math.floor(idx / 5);
+    let col = idx % 5;
+    if (row % 2 === 1) col = 4 - col;             // serpiente
+    cell.style.gridRow = String(8 - row);          // la salida abajo, la meta arriba
+    cell.style.gridColumn = String(col + 1);
+    let cls = 'board-cell';
+    let icon = '';
+    if (s === BOARD_SIZE) { cls += ' goal'; icon = '🏁'; }
+    else if (BOARD_TURBO.includes(s)) { cls += ' turbo'; icon = '🌀'; }
+    else if (BOARD_HOLES.includes(s)) { cls += ' hole'; icon = '🕳️'; }
+    cell.className = cls;
+    cell.innerHTML = `<span class="cell-num">${s}</span>${icon}`;
+    const players = byPos[s] || [];
+    if (players.length) {
+      if (players.some(p => p.me)) cell.classList.add('has-me');
+      const tk = document.createElement('div');
+      tk.className = 'cell-tokens';
+      players.slice(0, 3).forEach(p => {
+        const t = document.createElement('span');
+        t.className = 'cell-token';
+        t.textContent = p.avatar;
+        tk.append(t);
+      });
+      cell.append(tk);
+    }
+    grid.append(cell);
+  }
+
+  // fichas aún en la salida
+  const atStart = byPos[0] || [];
+  const log = $('#board-log');
+  log.innerHTML = '';
+  if (atStart.length) {
+    const row = document.createElement('div');
+    row.className = 'rank-row glass';
+    row.innerHTML = `<span class="rank-pos">🚀</span><div class="rank-info"><p class="rank-name">En la salida</p><p class="rank-sub">${atStart.map(p => `${p.avatar} ${escapeHtml(p.name)}`).join(' · ')}</p></div>`;
+    log.append(row);
+  }
+  if (!state.board.log.length && !atStart.length) {
+    log.innerHTML = '<p class="empty-note">Completa el reto de hoy para tirar tu primera ficha.</p>';
+  }
+  state.board.log.forEach(l => {
+    const row = document.createElement('div');
+    row.className = 'rank-row glass';
+    row.innerHTML = `<div class="rank-info"><p class="rank-sub">${escapeHtml(l.text)}</p></div>`;
+    log.append(row);
+  });
+}
+
 /* ---------- navegación ---------- */
-const VIEWS = ['home', 'duel', 'rank', 'profile'];
+const VIEWS = ['home', 'duel', 'board', 'rank', 'profile'];
 
 function goto(view) {
   VIEWS.forEach(v => $(`#view-${v}`).classList.toggle('active', v === view));
@@ -110,6 +258,7 @@ function goto(view) {
   window.scrollTo({ top: 0 });
   if (view === 'home') renderHome();
   if (view === 'duel') renderDuel();
+  if (view === 'board') renderBoard();
   if (view === 'rank') renderRank();
   if (view === 'profile') renderProfile();
 }
@@ -190,9 +339,15 @@ function playDaily() {
     onFinish({ score, detail, game }) {
       const prev = state.results[dateKey];
       const isRecord = !prev || score > prev.score;
+      const firstToday = !prev;
       if (isRecord) {
         state.results[dateKey] = { gameId: game.id, score, detail, at: Date.now() };
         saveState();
+      }
+      if (firstToday) {
+        // solo la primera partida del día mueve ficha (los reintentos no)
+        initBoard();
+        boardAdvance('@me', state.profile.name, state.profile.avatar, squaresForScore(score), 'Reto diario');
       }
       checkBadges();
       showResult({
@@ -203,7 +358,7 @@ function playDaily() {
         detail: detail + (prev && !isRecord ? ` · Tu mejor: ${prev.score}` : ''),
         actions: [
           ['COMPARTIR RESULTADO', 'btn-cyan', () => { goto('duel'); }],
-          ['VER RANKING', 'btn-primary', () => { goto('rank'); }],
+          ['VER TABLERO 🎲', 'btn-primary', () => { goto('board'); }],
           ['CERRAR', 'btn-ghost', () => { renderHome(); }],
         ],
       });
@@ -434,6 +589,9 @@ $('#duel-start-btn').addEventListener('click', () => {
               $('#duel-foe-score').textContent = String(foeScore);
               state.duels.push({ date: dateKey, gameId: game.id, me: state.profile.name, foe, myScore, foeScore });
               saveState();
+              initBoard();
+              if (myScore > foeScore) boardAdvance('@me', state.profile.name, state.profile.avatar, 3, 'Duelo ganado');
+              else if (foeScore > myScore) boardAdvance(foe.toLowerCase(), foe, '👾', 3, 'Duelo ganado');
               checkBadges();
               const won = myScore > foeScore;
               const tie = myScore === foeScore;
@@ -511,6 +669,9 @@ $('#import-btn').addEventListener('click', () => {
     existing.avatar = p.a || existing.avatar;
   } else {
     list.push({ name: p.n, avatar: p.a || '👾', score: p.s });
+    // primera puntuación de este amigo en esta fecha: su ficha avanza
+    initBoard();
+    boardAdvance(p.n.toLowerCase(), p.n, p.a || '👾', squaresForScore(p.s), 'Código importado', true);
   }
   saveState();
   $('#import-input').value = '';
@@ -594,6 +755,7 @@ $('#edit-save-btn').addEventListener('click', () => {
   const name = $('#edit-name').value.trim();
   if (name) state.profile.name = name.slice(0, 14);
   state.profile.avatar = pendingAvatar || state.profile.avatar;
+  if (state.board) ensurePlayer('@me', state.profile.name, state.profile.avatar);
   saveState();
   $('#edit-modal').classList.add('hidden');
   renderProfile();
@@ -626,5 +788,6 @@ $('#prof-reset-btn').addEventListener('click', () => {
     saveState();
     setTimeout(openEdit, 600);
   }
+  initBoard();
   renderHome();
 })();
