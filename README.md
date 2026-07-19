@@ -24,6 +24,7 @@ Diseño basado en el design system **"Daily Duel Neon"** del proyecto de Stitch 
 | 🦘 Jumpy Neón | Estilo *Doodle Jump*: rebotas sin parar y guías al personaje con izquierda/derecha para aterrizar en plataformas y subir. Muelles rosas que impulsan, plataformas moradas móviles, bordes que teletransportan. Puntúa la altura; si caes al vacío, fin. |
 | 🚦 Cruce Loco | Estilo *Trafix*: dirige el tráfico de un cruce de dos calzadas tocando los coches para frenarlos (punto rojo) y arrancarlos. +40 por coche que completa el recorrido; un choque en el cruce y se acabó. El tráfico se acelera (¡MÁS TRÁFICO!, ¡HORA PUNTA!). |
 | 🥣 Bol Glotón | Arrastra el bol para atrapar la comida que cae (🍣🍜🍎…) y esquiva los objetos tóxicos (☠️🧪🧨). +50 por manjar, 3 vidas; la lluvia se acelera y cada vez cae más porquería. |
+| 🍺 Caña Perfecta | El arte de tirar la cerveza: mantén TIRAR para abrir el grifo (la presión sube sola y a más presión, más espuma), suelta para que repose y SERVIR con el nivel en la marca y dos dedos de espuma. 8 clientes con pedidos distintos (caña, tubo, jarra); rebosar arruina la ronda y cada cliente el grifo viene más bravo. |
 
 El catálogo está pensado para crecer: añade más juegos al array `GAMES` de `js/games.js` y entran solos en la rotación diaria. Todos los minijuegos usan un **RNG determinista sembrado con la fecha**, así que el reto (distancias y anchos de plataforma) es idéntico para todos los jugadores del día.
 

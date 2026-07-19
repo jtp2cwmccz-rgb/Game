@@ -1648,6 +1648,305 @@ function gameBowl(stage, rng, api) {
 }
 
 /* ============================================================
+   CAÑA PERFECTA (tirar la cerveza correctamente)
+   Mantén TIRAR para abrir el grifo: la presión sube sola y a más
+   presión, más espuma. Suelta para que repose y pulsa SERVIR con
+   la cerveza en la marca y dos dedos de espuma. 8 clientes, cada
+   ronda con el grifo más bravo. Rebosar arruina la caña.
+   ============================================================ */
+function gameBeer(stage, rng, api) {
+  const wrap = el('div', 'flip-wrap');
+  const canvas = el('canvas', 'flip-canvas');
+  const powerWrap = el('div', 'flip-power');
+  const powerFill = el('div', 'flip-power-fill');
+  powerWrap.append(powerFill);
+  const controls = el('div', 'stairs-controls');
+  const btnPour = el('button', 'btn-3d btn-pink', '🚰 TIRAR');
+  const btnServe = el('button', 'btn-3d btn-cyan', '🍺 SERVIR');
+  controls.append(btnPour, btnServe);
+  wrap.append(canvas, powerWrap, controls);
+  stage.append(wrap);
+
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
+
+  (function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width;
+    H = Math.max(300, r.height - 128);
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  })();
+
+  const ROUNDS = 8;
+  const GX = W / 2 - 55, GY = H * 0.18, GW = 110, GH = H * 0.66;
+  const FOAM_IDEAL = 0.12;      // "dos dedos" de espuma
+  const CUSTOMERS = ['🧔', '👩', '👨‍🦳', '🧑‍🎤', '👵', '🧑‍🚀', '🕺', '🧙'];
+  const ORDERS = [[0.6, 'UNA CAÑA'], [0.75, 'UN TUBO'], [0.88, 'UNA JARRA'], [0.68, 'UNA CAÑA LARGA']];
+
+  let round = 0;
+  let target = 0.6;
+  let orderName = '';
+  let level = 0;                // cerveza (0..1)
+  let foam = 0;                 // espuma (fracción del vaso)
+  let pouring = false;
+  let pressure = 0;
+  let score = 0;
+  let perfects = 0;
+  let streak = 0;
+  let over = false;
+  let spillT = 0;               // animación de derrame
+  let msg = null;               // { text, color, t }
+  let waiting = false;          // entre rondas
+  let raf = null;
+  let last = performance.now();
+
+  function nextRound() {
+    round++;
+    if (round > ROUNDS) {
+      over = true;
+      setTimeout(() => api.finish(score, `${perfects} cañas perfectas de ${ROUNDS}`), 900);
+      return;
+    }
+    const o = ORDERS[Math.floor(rng() * ORDERS.length)];
+    target = o[0] + (rng() - 0.5) * 0.06;
+    orderName = o[1];
+    level = 0;
+    foam = 0;
+    pressure = 0;
+    spillT = 0;
+    waiting = false;
+  }
+
+  function serve() {
+    if (over || waiting || api.done || spillT > 0) return;
+    waiting = true;
+    const levelErr = Math.abs(level - target);
+    const foamErr = Math.abs(foam - FOAM_IDEAL);
+    const ptsLevel = Math.max(0, Math.round(200 - levelErr * 1000));
+    const ptsFoam = Math.max(0, Math.round(120 - foamErr * 900));
+    let pts = ptsLevel + ptsFoam;
+    const perfect = levelErr < 0.035 && foamErr < 0.045;
+    if (perfect) {
+      perfects++;
+      streak++;
+      pts += 50 * streak;
+      msg = { text: `¡CAÑA PERFECTA! +${pts}`, color: '#3dff9a', t: 1.4 };
+    } else {
+      streak = 0;
+      msg = { text: pts > 150 ? `¡Buena! +${pts}` : pts > 60 ? `Meh… +${pts}` : `Aguachirri +${pts}`, color: pts > 150 ? '#00f4fe' : '#ebb2ff', t: 1.4 };
+    }
+    score += pts;
+    api.setScore(score);
+    setTimeout(nextRound, 1200);
+  }
+
+  function spill() {
+    if (spillT > 0 || waiting) return;
+    spillT = 1;
+    streak = 0;
+    pouring = false;
+    msg = { text: '¡REBOSA! Caña arruinada +0', color: '#ff5470', t: 1.4 };
+    waiting = true;
+    setTimeout(nextRound, 1400);
+  }
+
+  const startPour = (e) => { e.preventDefault(); if (!over && !waiting) pouring = true; };
+  const stopPour = () => { pouring = false; };
+  btnPour.addEventListener('pointerdown', startPour);
+  window.addEventListener('pointerup', stopPour);
+  btnServe.addEventListener('pointerdown', (e) => { e.preventDefault(); serve(); });
+  const onKey = (e) => {
+    if (e.key === ' ' || e.key === 'ArrowDown') {
+      if (e.type === 'keydown') { if (!over && !waiting) pouring = true; }
+      else pouring = false;
+    }
+    if (e.key === 'Enter' && e.type === 'keydown') serve();
+  };
+  window.addEventListener('keydown', onKey);
+  window.addEventListener('keyup', onKey);
+
+  function step(dt) {
+    if (over) return;
+
+    if (pouring && !waiting) {
+      // la presión del grifo sube sola mientras tiras (cada ronda más rápido)
+      const rampa = 1 + (round - 1) * 0.14;
+      pressure = Math.min(1, pressure + dt / 0.8);
+      level += (0.12 + pressure * 0.34) * rampa * dt;
+      foam += (0.008 + pressure * pressure * 0.085) * rampa * dt;
+    } else {
+      pressure = Math.max(0, pressure - dt * 2.2);
+      foam = Math.max(0, foam - dt * 0.03); // la espuma reposa
+    }
+    powerFill.style.width = `${pressure * 100}%`;
+
+    if (level + foam > 1.03 && !waiting) spill();
+    if (spillT > 0) spillT = Math.max(0, spillT - dt * 0.8);
+    if (msg) { msg.t -= dt; if (msg.t <= 0) msg = null; }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // cliente y pedido
+    ctx.font = '30px serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(CUSTOMERS[(round - 1 + CUSTOMERS.length) % CUSTOMERS.length], 30, GY - 26);
+    ctx.font = '700 13px Space Grotesk, monospace';
+    ctx.fillStyle = '#00f4fe';
+    ctx.textAlign = 'left';
+    ctx.fillText(`CLIENTE ${Math.min(round, ROUNDS)}/${ROUNDS} · PIDE ${orderName}`, 56, GY - 26);
+    ctx.textAlign = 'center';
+
+    // vaso
+    ctx.strokeStyle = 'rgba(0,244,254,0.8)';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = '#00f4fe';
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.roundRect(GX, GY, GW, GH, [4, 4, 14, 14]);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // cerveza
+    const beerH = Math.min(1, level) * GH;
+    if (beerH > 1) {
+      const g = ctx.createLinearGradient(0, GY + GH - beerH, 0, GY + GH);
+      g.addColorStop(0, '#ffcf40');
+      g.addColorStop(1, '#e8930c');
+      ctx.fillStyle = g;
+      ctx.shadowColor = '#ffcf40';
+      ctx.shadowBlur = 14;
+      ctx.beginPath();
+      ctx.roundRect(GX + 3, GY + GH - beerH, GW - 6, beerH - 2, beerH > GH - 8 ? 3 : [0, 0, 12, 12]);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    // espuma
+    const foamH = foam * GH;
+    if (foamH > 1) {
+      const fy = GY + GH - beerH - foamH;
+      ctx.fillStyle = '#fdf6e3';
+      ctx.shadowColor = '#ffffff';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.roundRect(GX + 3, fy, GW - 6, foamH, 6);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      // burbujas
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      for (let i = 0; i < 5; i++) {
+        const bx = GX + 14 + ((i * 37 + Math.floor(foamH * 7)) % (GW - 28));
+        ctx.beginPath();
+        ctx.arc(bx, fy + 4 + (i * 13) % Math.max(6, foamH - 6), 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // marca objetivo
+    const ty = GY + GH - target * GH;
+    ctx.strokeStyle = '#ff007a';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 6]);
+    ctx.shadowColor = '#ff007a';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(GX - 16, ty);
+    ctx.lineTo(GX + GW + 16, ty);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.shadowBlur = 0;
+    ctx.font = '700 10px Space Grotesk, monospace';
+    ctx.fillStyle = '#ff007a';
+    ctx.textAlign = 'left';
+    ctx.fillText('MARCA', GX + GW + 20, ty);
+
+    // medidor de espuma ideal (a la izquierda del vaso)
+    const zoneTop = GY + GH - (target + FOAM_IDEAL + 0.045) * GH;
+    const zoneBot = GY + GH - (target + FOAM_IDEAL - 0.045) * GH;
+    ctx.fillStyle = 'rgba(61,255,154,0.25)';
+    ctx.fillRect(GX - 14, zoneTop, 8, zoneBot - zoneTop);
+    ctx.font = '700 9px Space Grotesk, monospace';
+    ctx.fillStyle = '#3dff9a';
+    ctx.textAlign = 'right';
+    ctx.fillText('ESPUMA', GX - 18, (zoneTop + zoneBot) / 2);
+
+    // grifo
+    ctx.fillStyle = '#2d3449';
+    ctx.strokeStyle = '#9d8ba0';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(W / 2 - 12, GY - 58, 24, 30, 6);
+    ctx.fill(); ctx.stroke();
+    if (pouring && !waiting) {
+      // chorro
+      ctx.fillStyle = 'rgba(255,207,64,0.9)';
+      ctx.shadowColor = '#ffcf40';
+      ctx.shadowBlur = 10;
+      const jetTop = GY - 28;
+      const jetBot = GY + GH - beerH - foamH;
+      ctx.fillRect(W / 2 - 3, jetTop, 6, Math.max(0, jetBot - jetTop));
+      ctx.shadowBlur = 0;
+    }
+
+    // derrame
+    if (spillT > 0) {
+      ctx.fillStyle = 'rgba(253,246,227,0.85)';
+      ctx.beginPath();
+      ctx.ellipse(W / 2, GY + GH + 14, 60 * (1 - spillT) + 20, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // mensaje de ronda
+    if (msg) {
+      ctx.font = '800 22px Lexend, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = msg.color;
+      ctx.globalAlpha = Math.min(1, msg.t * 2);
+      ctx.shadowColor = msg.color;
+      ctx.shadowBlur = 18;
+      ctx.fillText(msg.text, W / 2, H * 0.1);
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
+    }
+
+    if (over) {
+      ctx.font = '800 30px Lexend, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#3dff9a';
+      ctx.shadowColor = '#3dff9a';
+      ctx.shadowBlur = 20;
+      ctx.fillText('¡ÚLTIMA RONDA SERVIDA!', W / 2, H * 0.5);
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  function loop(now) {
+    if (api.done) return;
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    step(dt);
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+  raf = requestAnimationFrame(loop);
+  nextRound();
+
+  api.onQuit = () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener('pointerup', stopPour);
+    window.removeEventListener('keydown', onKey);
+    window.removeEventListener('keyup', onKey);
+  };
+}
+
+/* ============================================================
    Catálogo — la rotación diaria escoge uno por fecha
    ============================================================ */
 const GAMES = [
@@ -1658,4 +1957,5 @@ const GAMES = [
   { id: 'jumpy', icon: '🦘', name: 'Jumpy Neón', desc: 'Rebota de plataforma en plataforma y sube lo más alto que puedas. ¡No caigas!', run: gameJumpy },
   { id: 'trafix', icon: '🚦', name: 'Cruce Loco', desc: 'Toca los coches para frenarlos o arrancarlos y evita choques en el cruce.', run: gameTrafix },
   { id: 'bowl', icon: '🥣', name: 'Bol Glotón', desc: 'Atrapa la comida que cae con tu bol y esquiva los objetos tóxicos. 3 vidas.', run: gameBowl },
+  { id: 'beer', icon: '🍺', name: 'Caña Perfecta', desc: 'Tira la cerveza en la marca con dos dedos de espuma. 8 clientes te esperan.', run: gameBeer },
 ];
