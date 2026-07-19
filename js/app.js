@@ -118,23 +118,47 @@ function squaresForScore(score) {
 
 function initBoard() {
   if (!state.board) {
-    state.board = { season: 1, positions: {}, log: [], winners: [], replayed: false };
+    state.board = { season: 1, positions: {}, log: [], winners: [], applied: {}, replayed: false };
   }
   ensurePlayer('@me', state.profile.name, state.profile.avatar);
   if (!state.board.replayed) {
     // reconstruir el tablero a partir del historial ya jugado
     Object.entries(state.results)
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .forEach(([, r]) => boardAdvance('@me', state.profile.name, state.profile.avatar, squaresForScore(r.score), 'Reto diario', true));
-    Object.values(state.friends).forEach(list => list.forEach(f =>
-      boardAdvance(f.name.toLowerCase(), f.name, f.avatar, squaresForScore(f.score), 'Código importado', true)));
+      .forEach(([d, r]) => {
+        const n = squaresForScore(r.score);
+        boardAdvance('@me', state.profile.name, state.profile.avatar, n, 'Reto diario', true);
+        setApplied(d, '@me', n);
+      });
+    Object.entries(state.friends).forEach(([d, list]) => list.forEach(f => {
+      const n = squaresForScore(f.score);
+      boardAdvance(f.name.toLowerCase(), f.name, f.avatar, n, 'Código importado', true);
+      setApplied(d, f.name.toLowerCase(), n);
+    }));
     state.duels.forEach(d => {
       if (d.myScore > d.foeScore) boardAdvance('@me', state.profile.name, state.profile.avatar, 3, 'Duelo ganado', true);
       else if (d.foeScore > d.myScore) boardAdvance(d.foe.toLowerCase(), d.foe, '👾', 3, 'Duelo ganado', true);
     });
     state.board.replayed = true;
   }
+  // migración: estados guardados antes de que existiera el registro "applied"
+  if (!state.board.applied) {
+    state.board.applied = {};
+    Object.entries(state.results).forEach(([d, r]) => setApplied(d, '@me', squaresForScore(r.score)));
+    Object.entries(state.friends).forEach(([d, list]) => list.forEach(f => setApplied(d, f.name.toLowerCase(), squaresForScore(f.score))));
+  }
   saveState();
+}
+
+/* casillas ya acreditadas a un jugador por los puntos de una fecha */
+function appliedSquares(dateKey, key) {
+  const a = state.board.applied || (state.board.applied = {});
+  return (a[dateKey] && a[dateKey][key]) || 0;
+}
+
+function setApplied(dateKey, key, n) {
+  const a = state.board.applied || (state.board.applied = {});
+  (a[dateKey] = a[dateKey] || {})[key] = n;
 }
 
 function ensurePlayer(key, name, avatar) {
@@ -378,15 +402,21 @@ function playDaily() {
     onFinish({ score, detail, game }) {
       const prev = state.results[dateKey];
       const isRecord = !prev || score > prev.score;
-      const firstToday = !prev;
       if (isRecord) {
         state.results[dateKey] = { gameId: game.id, score, detail, at: Date.now() };
         saveState();
       }
-      if (firstToday) {
-        // solo la primera partida del día mueve ficha (los reintentos no)
-        initBoard();
-        boardAdvance('@me', state.profile.name, state.profile.avatar, squaresForScore(score), 'Reto diario');
+      // el tablero acredita tu mejor marca del día: si mejora y vale
+      // más casillas, la ficha avanza la diferencia
+      initBoard();
+      const best = Math.max(score, prev ? prev.score : 0);
+      const already = appliedSquares(dateKey, '@me');
+      const total = squaresForScore(best);
+      let moved = 0;
+      if (total > already) {
+        moved = total - already;
+        setApplied(dateKey, '@me', total);
+        boardAdvance('@me', state.profile.name, state.profile.avatar, moved, 'Reto diario');
       }
       checkBadges();
       showResult({
@@ -394,7 +424,9 @@ function playDaily() {
         title: isRecord ? '¡NUEVA MARCA!' : 'COMPLETADO',
         mood: isRecord ? 'win' : 'neutral',
         score,
-        detail: detail + (prev && !isRecord ? ` · Tu mejor: ${prev.score}` : ''),
+        detail: detail
+          + (moved ? ` · 🎲 Tu ficha avanza ${moved} casilla${moved > 1 ? 's' : ''}` : '')
+          + (prev && !isRecord ? ` · Tu mejor: ${prev.score}` : ''),
         actions: [
           ['COMPARTIR RESULTADO', 'btn-cyan', () => { goto('duel'); }],
           ['VER TABLERO 🎲', 'btn-primary', () => { goto('board'); }],
@@ -704,14 +736,22 @@ $('#import-btn').addEventListener('click', () => {
   }
   const list = state.friends[p.d] = state.friends[p.d] || [];
   const existing = list.find(f => f.name.toLowerCase() === p.n.toLowerCase());
+  initBoard();
+  const key = p.n.toLowerCase();
+  const avatar = p.a || (existing && existing.avatar) || '👾';
   if (existing) {
     if (p.s > existing.score) existing.score = p.s;
-    existing.avatar = p.a || existing.avatar;
+    existing.avatar = avatar;
   } else {
-    list.push({ name: p.n, avatar: p.a || '👾', score: p.s });
-    // primera puntuación de este amigo en esta fecha: su ficha avanza
-    initBoard();
-    boardAdvance(p.n.toLowerCase(), p.n, p.a || '👾', squaresForScore(p.s), 'Código importado', true);
+    list.push({ name: p.n, avatar, score: p.s });
+  }
+  // su ficha avanza lo que valga su mejor marca de esa fecha
+  const bestFriend = existing ? existing.score : p.s;
+  const alreadyF = appliedSquares(p.d, key);
+  const totalF = squaresForScore(bestFriend);
+  if (totalF > alreadyF) {
+    setApplied(p.d, key, totalF);
+    boardAdvance(key, p.n, avatar, totalF - alreadyF, 'Código importado', true);
   }
   saveState();
   $('#import-input').value = '';
