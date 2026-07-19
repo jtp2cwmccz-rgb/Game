@@ -1228,6 +1228,426 @@ function gameJumpy(stage, rng, api) {
 }
 
 /* ============================================================
+   CRUCE LOCO (estilo Trafix)
+   Dirige el tráfico del cruce: toca un coche para frenarlo y
+   vuelve a tocarlo para arrancarlo. Cada coche que cruza suma;
+   un choque y se acabó. El tráfico crece con el tiempo.
+   ============================================================ */
+function gameTrafix(stage, rng, api) {
+  const wrap = el('div', 'flip-wrap');
+  const canvas = el('canvas', 'flip-canvas');
+  const hint = el('p', 'stage-timer', 'TOCA UN COCHE PARA FRENARLO / ARRANCARLO');
+  wrap.append(canvas, hint);
+  stage.append(wrap);
+
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
+
+  (function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width;
+    H = Math.max(340, r.height - 40);
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  })();
+
+  const CX = W / 2, CY = H / 2;
+  const LO = 16;                 // separación del carril al eje
+  const ROAD = 62;               // ancho de calzada
+  const CAR_L = 30, CAR_W = 17;
+  const COLORS = ['#00f4fe', '#ff007a', '#bc13fe', '#3dff9a'];
+
+  /* streams: 0 arriba→abajo, 1 abajo→arriba, 2 izq→dcha, 3 dcha→izq */
+  const LEN = [H + 60, H + 60, W + 60, W + 60];
+  function carPos(c) {
+    if (c.stream === 0) return { x: CX - LO, y: c.d - 30 };
+    if (c.stream === 1) return { x: CX + LO, y: H + 30 - c.d };
+    if (c.stream === 2) return { x: c.d - 30, y: CY + LO };
+    return { x: W + 30 - c.d, y: CY - LO };
+  }
+  function carRect(c) {
+    const p = carPos(c);
+    return c.stream < 2
+      ? { x: p.x - CAR_W / 2, y: p.y - CAR_L / 2, w: CAR_W, h: CAR_L }
+      : { x: p.x - CAR_L / 2, y: p.y - CAR_W / 2, w: CAR_L, h: CAR_W };
+  }
+
+  let cars = [];
+  let nextId = 1;
+  let spawnT = [0.2, 1.1, 0.6, 1.6];
+  let t = 0;
+  let score = 0;
+  let passed = 0;
+  let over = false;
+  let crashP = null;
+  let notice = null;
+  let level = 0;
+  let raf = null;
+  let last = performance.now();
+
+  const LEVELS = [[18, '¡MÁS TRÁFICO!'], [36, '¡HORA PUNTA!']];
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (over) return;
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    let best = null, bd = 34;
+    for (const c of cars) {
+      const p = carPos(c);
+      const d = Math.hypot(p.x - mx, p.y - my);
+      if (d < bd) { bd = d; best = c; }
+    }
+    if (best) best.stopped = !best.stopped;
+  });
+
+  function crash(a, b) {
+    if (over) return;
+    over = true;
+    const pa = carPos(a);
+    crashP = { x: pa.x, y: pa.y };
+    setTimeout(() => api.finish(score, `${passed} coches cruzaron`), 850);
+  }
+
+  function step(dt) {
+    if (over) return;
+    t += dt;
+
+    if (level < LEVELS.length && t >= LEVELS[level][0]) {
+      notice = { text: LEVELS[level][1], t: 1.6 };
+      level++;
+    }
+    if (notice) { notice.t -= dt; if (notice.t <= 0) notice = null; }
+
+    // aparición de coches por stream
+    const pace = Math.max(0.5, 1 - t * 0.007);
+    for (let s = 0; s < 4; s++) {
+      spawnT[s] -= dt;
+      if (spawnT[s] <= 0) {
+        const lastCar = cars.filter(c => c.stream === s).sort((a, b) => a.d - b.d)[0];
+        if (!lastCar || lastCar.d > 55) {
+          cars.push({ id: nextId++, stream: s, d: 0, stopped: false, v: 0, color: COLORS[Math.floor(rng() * COLORS.length)] });
+          spawnT[s] = (1.3 + rng() * 1.6) * pace;
+        } else {
+          spawnT[s] = 0.3;
+        }
+      }
+    }
+
+    // movimiento con frenado y cola
+    const SPEED = Math.min(210, 120 + t * 2);
+    for (const c of cars) {
+      const ahead = cars
+        .filter(o => o.stream === c.stream && o.d > c.d)
+        .sort((a, b) => a.d - b.d)[0];
+      const blocked = c.stopped || (ahead && ahead.d - c.d < 44);
+      const target = blocked ? 0 : SPEED;
+      c.v += (target - c.v) * Math.min(1, dt * 8);
+      c.d += c.v * dt;
+    }
+
+    // choques entre streams distintos (solo cerca del cruce)
+    for (let i = 0; i < cars.length; i++) {
+      for (let j = i + 1; j < cars.length; j++) {
+        const a = cars[i], b = cars[j];
+        if (a.stream === b.stream) continue;
+        const ra = carRect(a), rb = carRect(b);
+        if (ra.x < rb.x + rb.w && ra.x + ra.w > rb.x && ra.y < rb.y + rb.h && ra.y + ra.h > rb.y) {
+          crash(a, b);
+        }
+      }
+    }
+
+    // coches que completan el recorrido
+    const before = cars.length;
+    cars = cars.filter(c => {
+      if (c.d > LEN[c.stream]) {
+        passed++;
+        score += 40;
+        return false;
+      }
+      return true;
+    });
+    if (cars.length !== before) api.setScore(score);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // calzadas
+    ctx.fillStyle = '#060e20';
+    ctx.fillRect(CX - ROAD / 2, 0, ROAD, H);
+    ctx.fillRect(0, CY - ROAD / 2, W, ROAD);
+    // bordes con glow
+    ctx.strokeStyle = 'rgba(0,244,254,0.4)';
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = '#00f4fe';
+    ctx.shadowBlur = 6;
+    [[CX - ROAD / 2, 0, CX - ROAD / 2, CY - ROAD / 2], [CX + ROAD / 2, 0, CX + ROAD / 2, CY - ROAD / 2],
+     [CX - ROAD / 2, CY + ROAD / 2, CX - ROAD / 2, H], [CX + ROAD / 2, CY + ROAD / 2, CX + ROAD / 2, H],
+     [0, CY - ROAD / 2, CX - ROAD / 2, CY - ROAD / 2], [CX + ROAD / 2, CY - ROAD / 2, W, CY - ROAD / 2],
+     [0, CY + ROAD / 2, CX - ROAD / 2, CY + ROAD / 2], [CX + ROAD / 2, CY + ROAD / 2, W, CY + ROAD / 2]]
+      .forEach(([x0, y0, x1, y1]) => { ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); });
+    ctx.shadowBlur = 0;
+
+    // líneas centrales discontinuas
+    ctx.strokeStyle = 'rgba(235,178,255,0.25)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([14, 18]);
+    ctx.beginPath(); ctx.moveTo(CX, 0); ctx.lineTo(CX, H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, CY); ctx.lineTo(W, CY); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // coches
+    for (const c of cars) {
+      const r = carRect(c);
+      ctx.fillStyle = c.stopped ? '#31394d' : '#171f33';
+      ctx.strokeStyle = c.color;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = c.color;
+      ctx.shadowBlur = c.stopped ? 4 : 12;
+      ctx.beginPath();
+      ctx.roundRect(r.x, r.y, r.w, r.h, 5);
+      ctx.fill();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      if (c.stopped) {
+        ctx.fillStyle = '#ff5470';
+        ctx.beginPath();
+        ctx.arc(r.x + r.w / 2, r.y + r.h / 2, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    if (notice) {
+      ctx.font = '800 26px Lexend, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ebb2ff';
+      ctx.globalAlpha = Math.min(1, notice.t * 2);
+      ctx.shadowColor = '#bc13fe';
+      ctx.shadowBlur = 22;
+      ctx.fillText(notice.text, W / 2, H * 0.16);
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
+    }
+
+    if (crashP) {
+      ctx.font = '40px serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('💥', crashP.x, crashP.y);
+      ctx.font = '800 34px Lexend, sans-serif';
+      ctx.fillStyle = '#ff5470';
+      ctx.shadowColor = '#ff5470';
+      ctx.shadowBlur = 20;
+      ctx.fillText('¡CHOQUE!', W / 2, H * 0.3);
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  function loop(now) {
+    if (api.done) return;
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    step(dt);
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+  raf = requestAnimationFrame(loop);
+
+  api.onQuit = () => cancelAnimationFrame(raf);
+}
+
+/* ============================================================
+   BOL GLOTÓN (atrapa la comida, esquiva lo tóxico)
+   Mueve el bol siguiendo tu dedo y recoge la comida que cae.
+   Los objetos tóxicos restan una vida (tienes 3). La lluvia se
+   acelera con el tiempo.
+   ============================================================ */
+function gameBowl(stage, rng, api) {
+  const wrap = el('div', 'flip-wrap');
+  const canvas = el('canvas', 'flip-canvas');
+  const hint = el('p', 'stage-timer', 'ARRASTRA PARA MOVER EL BOL · EVITA LO TÓXICO');
+  wrap.append(canvas, hint);
+  stage.append(wrap);
+
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
+
+  (function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width;
+    H = Math.max(340, r.height - 40);
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  })();
+
+  const FOOD = ['🍣', '🍜', '🍎', '🍕', '🥭', '🍤', '🍩', '🍇'];
+  const TOXIC = ['☠️', '🧪', '🧨', '🗑️'];
+  const BOWL_Y = H - 56;
+  const CATCH_R = 36;
+
+  let bowlX = W / 2;
+  let targetX = W / 2;
+  let items = [];              // { x, y, vy, emoji, toxic, spin }
+  let t = 0;
+  let untilSpawn = 0.4;
+  let score = 0;
+  let caught = 0;
+  let lives = 3;
+  let over = false;
+  let flash = null;            // { color, t }
+  let popup = null;            // { text, x, t, color }
+  let raf = null;
+  let last = performance.now();
+
+  const track = (e) => {
+    const r = canvas.getBoundingClientRect();
+    targetX = Math.max(26, Math.min(W - 26, e.clientX - r.left));
+  };
+  canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); track(e); });
+  canvas.addEventListener('pointermove', track);
+  let keyDir = 0;
+  const onKey = (e) => {
+    if (e.type === 'keydown') {
+      if (e.key === 'ArrowLeft') keyDir = -1;
+      if (e.key === 'ArrowRight') keyDir = 1;
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') keyDir = 0;
+  };
+  window.addEventListener('keydown', onKey);
+  window.addEventListener('keyup', onKey);
+
+  function step(dt) {
+    if (over) return;
+    t += dt;
+
+    if (keyDir) targetX = Math.max(26, Math.min(W - 26, targetX + keyDir * 420 * dt));
+    bowlX += (targetX - bowlX) * Math.min(1, dt * 14);
+
+    untilSpawn -= dt;
+    if (untilSpawn <= 0) {
+      const toxic = rng() < Math.min(0.38, 0.2 + t * 0.004);
+      items.push({
+        x: 24 + rng() * (W - 48),
+        y: -24,
+        vy: (150 + t * 5) * (0.85 + rng() * 0.4),
+        emoji: toxic ? TOXIC[Math.floor(rng() * TOXIC.length)] : FOOD[Math.floor(rng() * FOOD.length)],
+        toxic,
+        spin: (rng() - 0.5) * 3,
+      });
+      untilSpawn = Math.max(0.3, 0.62 - t * 0.005) + rng() * 0.2;
+    }
+
+    for (const it of items) {
+      it.y += it.vy * dt;
+      // captura
+      if (!it.done && Math.abs(it.y - BOWL_Y) < 20 && Math.abs(it.x - bowlX) < CATCH_R) {
+        it.done = true;
+        if (it.toxic) {
+          lives--;
+          flash = { color: 'rgba(255,84,112,0.35)', t: 0.4 };
+          popup = { text: '☠️ −1 VIDA', x: it.x, t: 1, color: '#ff5470' };
+          if (lives <= 0) {
+            over = true;
+            setTimeout(() => api.finish(score, `${caught} manjares atrapados`), 850);
+          }
+        } else {
+          caught++;
+          score += 50;
+          api.setScore(score);
+          popup = { text: '+50', x: it.x, t: 0.8, color: '#3dff9a' };
+        }
+      }
+    }
+    items = items.filter(it => !it.done && it.y < H + 30);
+
+    if (flash) { flash.t -= dt; if (flash.t <= 0) flash = null; }
+    if (popup) { popup.t -= dt; if (popup.t <= 0) popup = null; }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // objetos cayendo
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const it of items) {
+      ctx.save();
+      ctx.translate(it.x, it.y);
+      ctx.rotate(it.spin * it.y / 100);
+      ctx.font = '26px serif';
+      if (it.toxic) {
+        ctx.shadowColor = '#ff5470';
+        ctx.shadowBlur = 12;
+      }
+      ctx.fillText(it.emoji, 0, 0);
+      ctx.restore();
+      ctx.shadowBlur = 0;
+    }
+
+    // bol
+    ctx.font = '44px serif';
+    ctx.shadowColor = '#00f4fe';
+    ctx.shadowBlur = 16;
+    ctx.fillText('🥣', bowlX, BOWL_Y + 8);
+    ctx.shadowBlur = 0;
+
+    // vidas
+    ctx.font = '16px serif';
+    ctx.textAlign = 'right';
+    ctx.fillText('❤️'.repeat(Math.max(0, lives)) + '🖤'.repeat(3 - Math.max(0, lives)), W - 10, 22);
+    ctx.textAlign = 'center';
+
+    if (popup) {
+      ctx.font = '700 18px Lexend, sans-serif';
+      ctx.fillStyle = popup.color;
+      ctx.globalAlpha = Math.max(0, popup.t);
+      ctx.shadowColor = popup.color;
+      ctx.shadowBlur = 12;
+      ctx.fillText(popup.text, popup.x, BOWL_Y - 40 - (1 - popup.t) * 24);
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
+    }
+
+    if (flash) {
+      ctx.fillStyle = flash.color;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    if (over) {
+      ctx.font = '800 34px Lexend, sans-serif';
+      ctx.fillStyle = '#ff5470';
+      ctx.shadowColor = '#ff5470';
+      ctx.shadowBlur = 20;
+      ctx.fillText('¡EMPACHO TÓXICO!', W / 2, H * 0.4);
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  function loop(now) {
+    if (api.done) return;
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    step(dt);
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+  raf = requestAnimationFrame(loop);
+
+  api.onQuit = () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener('keydown', onKey);
+    window.removeEventListener('keyup', onKey);
+  };
+}
+
+/* ============================================================
    Catálogo — la rotación diaria escoge uno por fecha
    ============================================================ */
 const GAMES = [
@@ -1236,4 +1656,6 @@ const GAMES = [
   { id: 'stairs', icon: '🪜', name: 'Escalera Infinita', desc: 'SUBIR sigue recto, GIRAR cambia de lado. Ni un paso al vacío y no te quedes sin energía.', run: gameStairs },
   { id: 'tuktuk', icon: '🛺', name: 'Tuk-Tuk Rush', desc: 'Esquiva el tráfico de Bangkok con tu tuk-tuk. ¡Cuidado con los elefantes!', run: gameTuktuk },
   { id: 'jumpy', icon: '🦘', name: 'Jumpy Neón', desc: 'Rebota de plataforma en plataforma y sube lo más alto que puedas. ¡No caigas!', run: gameJumpy },
+  { id: 'trafix', icon: '🚦', name: 'Cruce Loco', desc: 'Toca los coches para frenarlos o arrancarlos y evita choques en el cruce.', run: gameTrafix },
+  { id: 'bowl', icon: '🥣', name: 'Bol Glotón', desc: 'Atrapa la comida que cae con tu bol y esquiva los objetos tóxicos. 3 vidas.', run: gameBowl },
 ];
