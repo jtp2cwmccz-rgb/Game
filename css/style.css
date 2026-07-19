@@ -412,6 +412,14 @@ body {
   text-align: center;
   flex-shrink: 0;
 }
+.rail-play {
+  cursor: pointer;
+  color: var(--on-surface);
+  font-family: inherit;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.rail-play:active { transform: translateY(2px); }
+.rail-play .rail-day { color: var(--secondary-container); }
 .rail-card .rail-icon { font-size: 30px; }
 .rail-card .rail-name { font-family: var(--font-head); font-size: 13px; font-weight: 600; margin-top: 6px; }
 .rail-card .rail-day { margin-top: 4px; color: var(--outline); }

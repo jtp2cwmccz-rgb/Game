@@ -16,8 +16,26 @@ function todayKey(offset = 0) {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
+/* De momento: todos los juegos desbloqueados y el reto arranca uno al azar.
+   Pon RANDOM_MODE en false para volver a la rotación fija por fecha. */
+const RANDOM_MODE = true;
+
 function gameForDate(dateKey) {
   return GAMES[hashSeed('rotation:' + dateKey) % GAMES.length];
+}
+
+function pickRandomGame() {
+  return GAMES[Math.floor(Math.random() * GAMES.length)];
+}
+
+/* nombre a mostrar para "el juego de hoy": el último jugado, o la rotación */
+function todaysGameName() {
+  const r = state.results[todayKey()];
+  if (r) {
+    const g = GAMES.find(x => x.id === r.gameId);
+    if (g) return g.name;
+  }
+  return RANDOM_MODE ? 'Reto aleatorio' : gameForDate(todayKey()).name;
 }
 
 function dailyRng(dateKey, salt = '') {
@@ -283,7 +301,7 @@ function renderBoard() {
   const res = state.results[todayKey()];
   if (res) {
     $('#qb-title').textContent = `+${res.score} PTS GANADOS`;
-    $('#qb-sub').textContent = `Casilla ${myPos} de ${BOARD_SIZE} · ${gameForDate(todayKey()).name}`;
+    $('#qb-sub').textContent = `Casilla ${myPos} de ${BOARD_SIZE} · ${todaysGameName()}`;
     $('#qb-btn').textContent = 'MEJORAR';
   } else {
     $('#qb-title').textContent = 'RETO PENDIENTE';
@@ -338,8 +356,8 @@ const overlay = $('#game-overlay');
 const stageEl = $('#game-stage');
 let activeApi = null;
 
-function playGame({ dateKey, salt, label, onFinish }) {
-  const game = gameForDate(dateKey);
+function playGame({ dateKey, salt, label, game, onFinish }) {
+  game = game || gameForDate(dateKey);
   stageEl.innerHTML = '';
   $('#game-hud-title').textContent = game.name;
   $('#game-hud-label').textContent = label || 'RETO DIARIO';
@@ -393,12 +411,14 @@ function showResult({ label, title, mood, score, detail, actions }) {
 /* ============================================================
    RETO DIARIO
    ============================================================ */
-function playDaily() {
+function playDaily(forcedGame) {
   const dateKey = todayKey();
+  const game = forcedGame || (RANDOM_MODE ? pickRandomGame() : gameForDate(dateKey));
   playGame({
     dateKey,
     salt: 'daily',
     label: 'RETO DIARIO',
+    game,
     onFinish({ score, detail, game }) {
       const prev = state.results[dateKey];
       const isRecord = !prev || score > prev.score;
@@ -443,9 +463,15 @@ function renderHome() {
   $('#home-avatar').textContent = state.profile.avatar;
   $('#home-name').textContent = state.profile.name;
   $('#home-streak').textContent = String(currentStreak());
-  $('#home-game-icon').textContent = game.icon;
-  $('#home-game-name').textContent = game.name;
-  $('#home-game-desc').textContent = game.desc;
+  if (RANDOM_MODE) {
+    $('#home-game-icon').textContent = '🎲';
+    $('#home-game-name').textContent = 'Reto Aleatorio';
+    $('#home-game-desc').textContent = 'Cada partida arranca un minijuego al azar. ¡Todos desbloqueados!';
+  } else {
+    $('#home-game-icon').textContent = game.icon;
+    $('#home-game-name').textContent = game.name;
+    $('#home-game-desc').textContent = game.desc;
+  }
   $('#home-best').textContent = res ? `${res.score} pts` : '—';
   $('#home-play-label').textContent = res ? 'REINTENTAR (MEJORA TU MARCA)' : 'JUGAR AHORA';
 
@@ -463,16 +489,26 @@ function renderHome() {
     rows.forEach((r, i) => box.append(rankRow(r, i + 1)));
   }
 
-  // próximos retos
+  // galería de juegos / próximos retos
   const rail = $('#home-upcoming');
   rail.innerHTML = '';
-  for (let i = 1; i <= 5; i++) {
-    const k = todayKey(i);
-    const g = gameForDate(k);
-    const c = document.createElement('div');
-    c.className = 'rail-card glass';
-    c.innerHTML = `<div class="rail-icon">${g.icon}</div><div class="rail-name">${g.name}</div><div class="rail-day label-caps">${fmtDate(k)}</div>`;
-    rail.append(c);
+  if (RANDOM_MODE) {
+    GAMES.forEach(g => {
+      const c = document.createElement('button');
+      c.className = 'rail-card glass rail-play';
+      c.innerHTML = `<div class="rail-icon">${g.icon}</div><div class="rail-name">${g.name}</div><div class="rail-day label-caps">JUGAR ▶</div>`;
+      c.addEventListener('click', () => playDaily(g));
+      rail.append(c);
+    });
+  } else {
+    for (let i = 1; i <= 5; i++) {
+      const k = todayKey(i);
+      const g = gameForDate(k);
+      const c = document.createElement('div');
+      c.className = 'rail-card glass';
+      c.innerHTML = `<div class="rail-icon">${g.icon}</div><div class="rail-name">${g.name}</div><div class="rail-day label-caps">${fmtDate(k)}</div>`;
+      rail.append(c);
+    }
   }
 }
 
@@ -488,8 +524,8 @@ setInterval(() => {
   if (elC) elC.textContent = `${hh}:${mm}:${ss}`;
 }, 1000);
 
-$('#home-play-btn').addEventListener('click', playDaily);
-$('#qb-btn').addEventListener('click', playDaily);
+$('#home-play-btn').addEventListener('click', () => playDaily());
+$('#qb-btn').addEventListener('click', () => playDaily());
 
 /* ============================================================
    RANKING
@@ -541,7 +577,7 @@ function renderRank() {
   let rows, sub;
   if (rankRange === 'today') {
     rows = leaderboardFor(todayKey());
-    sub = `Reto de hoy · ${gameForDate(todayKey()).name}`;
+    sub = `Reto de hoy · ${todaysGameName()}`;
   } else if (rankRange === 'week') {
     rows = aggregateBoard([...Array(7)].map((_, i) => todayKey(-i)));
     sub = 'Suma de los últimos 7 días';
@@ -600,7 +636,7 @@ function renderDuel() {
 
   // código de compartir
   if (res) {
-    $('#share-status').textContent = `Tu resultado de hoy en ${gameForDate(dateKey).name}:`;
+    $('#share-status').textContent = `Tu resultado de hoy en ${todaysGameName()}:`;
     $('#share-code').textContent = buildShareCode(dateKey, res);
   } else {
     $('#share-status').textContent = 'Juega el reto de hoy para generar tu código.';
@@ -634,11 +670,12 @@ $('#duel-start-btn').addEventListener('click', () => {
   const foe = $('#duel-foe-input').value.trim() || 'Rival';
   const dateKey = todayKey();
   const duelSalt = 'duel:' + Date.now();
+  const duelGame = RANDOM_MODE ? pickRandomGame() : gameForDate(dateKey);
   $('#duel-foe-name').textContent = foe;
 
   // turno 1: yo
   playGame({
-    dateKey, salt: duelSalt + ':p1', label: `DUELO · TURNO DE ${state.profile.name.toUpperCase()}`,
+    dateKey, salt: duelSalt + ':p1', label: `DUELO · TURNO DE ${state.profile.name.toUpperCase()}`, game: duelGame,
     onFinish({ score: myScore, game }) {
       $('#duel-me-score').textContent = String(myScore);
       showResult({
@@ -648,9 +685,9 @@ $('#duel-start-btn').addEventListener('click', () => {
         score: null,
         detail: `Pásale el móvil a ${foe}. Le toca el mismo reto.`,
         actions: [[`TURNO DE ${foe.toUpperCase()}`, 'btn-pink', () => {
-          // turno 2: rival (misma semilla → mismo reto exacto)
+          // turno 2: rival (mismo juego y misma semilla → mismo reto exacto)
           playGame({
-            dateKey, salt: duelSalt + ':p1', label: `DUELO · TURNO DE ${foe.toUpperCase()}`,
+            dateKey, salt: duelSalt + ':p1', label: `DUELO · TURNO DE ${foe.toUpperCase()}`, game: duelGame,
             onFinish({ score: foeScore }) {
               $('#duel-foe-score').textContent = String(foeScore);
               state.duels.push({ date: dateKey, gameId: game.id, me: state.profile.name, foe, myScore, foeScore });
@@ -704,8 +741,7 @@ function parseShareCode(code) {
 $('#share-copy-btn').addEventListener('click', async () => {
   const code = $('#share-code').textContent;
   if (code === '—') { toast('Primero juega el reto de hoy'); return; }
-  const game = gameForDate(todayKey());
-  const text = `⚡ Daily Buddy Battles — ${game.name}\n${state.profile.avatar} ${state.profile.name}: ${state.results[todayKey()].score} pts\n¿Me superas? Pega mi código en la app:\n${code}`;
+  const text = `⚡ Daily Buddy Battles — ${todaysGameName()}\n${state.profile.avatar} ${state.profile.name}: ${state.results[todayKey()].score} pts\n¿Me superas? Pega mi código en la app:\n${code}`;
   try {
     await navigator.clipboard.writeText(text);
     toast('¡Copiado! Envíaselo a tus amigos');
