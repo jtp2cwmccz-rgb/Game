@@ -43,6 +43,15 @@ function el(tag, cls, html) {
   return n;
 }
 
+/* barra de progreso neón (spec "Progress Bars") para los juegos con tiempo */
+function timeBar() {
+  const bar = el('div', 'progress');
+  const fill = el('div');
+  fill.style.width = '100%';
+  bar.append(fill);
+  return { bar, set(ratio) { fill.style.width = `${Math.max(0, ratio) * 100}%`; } };
+}
+
 /* ============================================================
    1. DUELO DE REFLEJOS
    ============================================================ */
@@ -187,7 +196,8 @@ function gameMath(stage, rng, api) {
   head.style.flex = '0 0 auto';
   const timerP = el('p', 'stage-timer', `⏱ ${DURATION} s`);
   const streakP = el('p', 'label-caps text-pink', 'RACHA ×0');
-  head.append(timerP, streakP);
+  const tb = timeBar();
+  head.append(timerP, tb.bar, streakP);
 
   const box = el('div', 'quiz-box');
   const qP = el('p', 'quiz-q', '');
@@ -239,6 +249,7 @@ function gameMath(stage, rng, api) {
   ticker = setInterval(() => {
     left--;
     timerP.textContent = `⏱ ${left} s`;
+    tb.set(left / DURATION);
     if (left <= 0) {
       clearInterval(ticker);
       api.finish(score, `${correct} aciertos · ${wrong} fallos`);
@@ -271,7 +282,8 @@ function gameWord(stage, rng, api) {
   const head = el('div', 'stage-center');
   head.style.flex = '0 0 auto';
   const timerP = el('p', 'stage-timer', `⏱ ${DURATION} s`);
-  head.append(el('p', 'stage-msg', 'Ordena las letras y forma la palabra.'), timerP);
+  const tb = timeBar();
+  head.append(el('p', 'stage-msg', 'Ordena las letras y forma la palabra.'), timerP, tb.bar);
 
   const box = el('div', 'quiz-box');
   const answer = el('div', 'word-answer');
@@ -334,6 +346,7 @@ function gameWord(stage, rng, api) {
   const ticker = setInterval(() => {
     left--;
     timerP.textContent = `⏱ ${left} s`;
+    tb.set(left / DURATION);
     if (left <= 0) {
       clearInterval(ticker);
       api.finish(score, `${solved} palabras resueltas`);
@@ -428,7 +441,8 @@ function gameTargets(stage, rng, api) {
   const head = el('div', 'stage-center');
   head.style.flex = '0 0 auto';
   const timerP = el('p', 'stage-timer', `⏱ ${DURATION} s`);
-  head.append(el('p', 'stage-msg', 'Revienta las dianas antes de que se encojan.'), timerP);
+  const tb = timeBar();
+  head.append(el('p', 'stage-msg', 'Revienta las dianas antes de que se encojan.'), timerP, tb.bar);
   const arena = el('div', 'target-arena');
   stage.append(head, arena);
 
@@ -469,6 +483,7 @@ function gameTargets(stage, rng, api) {
   ticker = setInterval(() => {
     left--;
     timerP.textContent = `⏱ ${left} s`;
+    tb.set(left / DURATION);
     if (left <= 0) {
       clearInterval(ticker);
       clearInterval(spawner);

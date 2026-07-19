@@ -453,9 +453,9 @@ function aggregateBoard(days) {
 function rankRow(r, pos) {
   const row = document.createElement('div');
   row.className = 'rank-row glass' + (r.me ? ' me' : '');
-  const medal = pos === 1 ? '🥇' : pos === 2 ? '🥈' : pos === 3 ? '🥉' : String(pos);
+  const metal = pos === 1 ? 'rb-gold' : pos === 2 ? 'rb-silver' : pos === 3 ? 'rb-bronze' : 'rb-plain';
   row.innerHTML = `
-    <span class="rank-pos">${medal}</span>
+    <span class="rank-badge ${metal}">${pos}</span>
     <div class="avatar avatar-md">${r.avatar}</div>
     <div class="rank-info">
       <p class="rank-name">${escapeHtml(r.name)}${r.me ? ' <span class="text-cyan">(tú)</span>' : ''}</p>
