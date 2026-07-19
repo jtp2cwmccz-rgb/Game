@@ -34,6 +34,16 @@ function el(tag, cls, html) {
   return n;
 }
 
+/* baraja una copia del array con el RNG dado (Fisher–Yates) */
+function shuffled(arr, rng) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 /* ============================================================
    FLIP JUMP
    Mantén pulsado para cargar, suelta para saltar: el personaje da
@@ -759,10 +769,11 @@ function gameStairs(stage, rng, api) {
 }
 
 /* ============================================================
-   TUK-TUK RUSH (esquivar tráfico, inspirado en Tailandia)
-   Conduces un tuk-tuk por Bangkok de noche: toca izquierda o
-   derecha para cambiar de carril y esquiva el tráfico (¡y los
-   elefantes!). La velocidad sube con el tiempo.
+   TUKTUK DODGE — Bangkok Run (port fiel del juego de Base44)
+   Esquiva-carriles cenital: el tuk-tuk va abajo y cambia de
+   carril (toca izquierda/derecha o flechas) para esquivar
+   elefantes, motos y artistas. Puntúas por tiempo + por cada
+   esquive; la velocidad rampa de START a MAX. Un golpe y fin.
    ============================================================ */
 function gameTuktuk(stage, rng, api) {
   const wrap = el('div', 'flip-wrap');
@@ -785,203 +796,241 @@ function gameTuktuk(stage, rng, api) {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   })();
 
-  const LANES = 3;
-  const ROAD_W = Math.min(W * 0.72, 300);
-  const ROAD_X = (W - ROAD_W) / 2;
-  const LANE_W = ROAD_W / LANES;
-  const PLAYER_Y = H - 74;
-  const CYAN = '#00f4fe', PINK = '#ff007a';
+  // ---------- config (portada de config.js) ----------
+  const LANE_COUNT = 4;
+  const ROAD_WIDTH = Math.min(W * 0.78, 340);
+  const ROAD_LEFT = (W - ROAD_WIDTH) / 2;
+  const LANE_WIDTH = ROAD_WIDTH / LANE_COUNT;
+  const laneX = (l) => ROAD_LEFT + LANE_WIDTH * (l + 0.5);
+  const PLAYER_START_LANE = Math.floor(LANE_COUNT / 2);
+  const PLAYER_Y = H - 84;
 
-  const CARS = ['🚕', '🚌', '🚚', '🛵', '🚗'];
-  const DECOR = ['🌴', '🏮', '🛕', '🌴', '🍜', '🏮', '🌴'];
+  const DIFFICULTY_RAMP_SECONDS = 45;
+  const OBSTACLE_SPEED_START = 250;   // px/s (a 768 de alto lógico)
+  const OBSTACLE_SPEED_MAX = 620;
+  const SPAWN_MAX_DELAY = 1.25;
+  const SPAWN_MIN_DELAY = 0.62;
+  const SPAWN_MIN_FLOOR = 0.5;
+  const SCORE_PER_DODGE = 25;
+  const SCORE_TICK_MS = 200;
+  const SCORE_TICK_VALUE = 2;
 
-  let lane = 1;                 // carril objetivo
-  let laneF = 1;                // carril interpolado (para el dibujo y colisión)
-  let rows = [];                // { y, cars: [{lane, emoji}], counted }
-  let prevGap = 1;
-  let t = 0;
+  // colores del original (PALETTE / fallback textures)
+  const GRASS = '#14532d', ROADC = '#2b3547', STRIPE = '#fbbf24';
+  const SPARK_TINT = ['#fbbf24', '#f97316', '#ec4899', '#3b82f6', '#10b981'];
+  // roster de obstáculos: emoji + glow del color de su textura fallback
+  const OBSTACLES = [
+    { emoji: '🐘', glow: '#6b7280', size: 46, name: 'elefante' },
+    { emoji: '🏍️', glow: '#3b82f6', size: 34, name: 'moto' },
+    { emoji: '💃', glow: '#ec4899', size: 36, name: 'artista' },
+  ];
+
+  const scaleY = H / 768;
+
+  let playerLane = PLAYER_START_LANE;
+  let playerX = laneX(playerLane);
+  let obstacles = [];            // { lane, y, o, passed }
+  let sparks = [];               // { x, y, vx, vy, life, color }
+  let palms = [];                // decorado lateral { x, y, r }
+  let stripeScroll = 0;
+  let elapsedSec = 0;
+  let sinceScoreTick = 0;
   let untilSpawn = 0.5;
-  let roadScroll = 0;
-  let meters = 0;
-  let dodged = 0;
   let score = 0;
+  let dodged = 0;
   let over = false;
-  let crashAt = null;           // { x, y }
-  let notice = null;
-  let level = 0;
+  let crashAt = null;
+  let flashT = 0;
   let raf = null;
   let last = performance.now();
 
-  const LEVELS = [
-    [15, '¡HORA PUNTA!'],
-    [32, '¡A TODO GAS!'],
-  ];
-
-  function laneX(l) { return ROAD_X + LANE_W * (l + 0.5); }
-
-  /* cada fila deja siempre un hueco alcanzable desde el hueco anterior */
-  function spawnRow() {
-    const shift = Math.floor(rng() * 3) - 1;
-    const gap = Math.max(0, Math.min(LANES - 1, prevGap + shift));
-    prevGap = gap;
-    const cars = [];
-    for (let l = 0; l < LANES; l++) {
-      if (l === gap) continue;
-      if (rng() < 0.3) continue; // a veces queda otro hueco extra
-      const emoji = rng() < 0.08 ? '🐘' : CARS[Math.floor(rng() * CARS.length)];
-      cars.push({ lane: l, emoji });
-    }
-    rows.push({ y: -50, cars, counted: false });
+  // palmeras iniciales en los arcenes (se reciclan al bajar)
+  for (let i = 0; i < 8; i++) {
+    const side = i % 2 === 0 ? ROAD_LEFT - 34 : ROAD_LEFT + ROAD_WIDTH + 34;
+    palms.push({ x: side, y: (i / 8) * (H + 200) - 100, r: 22 });
   }
 
-  function setLane(clientX) {
+  function difficulty() { return Math.min(1, elapsedSec / DIFFICULTY_RAMP_SECONDS); }
+
+  function moveLane(dir) {
+    if (over) return;
+    playerLane = Math.max(0, Math.min(LANE_COUNT - 1, playerLane + dir));
+  }
+
+  function setLaneFromX(clientX) {
     const r = canvas.getBoundingClientRect();
-    lane = clientX < r.left + r.width / 2 ? Math.max(0, lane - 1) : Math.min(LANES - 1, lane + 1);
+    moveLane(clientX - r.left < r.width / 2 ? -1 : 1);
   }
-  canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); if (!over) setLane(e.clientX); });
+  canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); if (!over) setLaneFromX(e.clientX); });
   const onKey = (e) => {
     if (e.repeat || over) return;
-    if (e.key === 'ArrowLeft') lane = Math.max(0, lane - 1);
-    if (e.key === 'ArrowRight') lane = Math.min(LANES - 1, lane + 1);
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') moveLane(-1);
+    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') moveLane(1);
   };
   window.addEventListener('keydown', onKey);
+
+  function spawn() {
+    // un obstáculo en un carril al azar; con dificultad alta, a veces dos
+    // en carriles distintos dejando siempre al menos uno libre.
+    const lanes = [];
+    for (let l = 0; l < LANE_COUNT; l++) lanes.push(l);
+    const shuffledLanes = shuffled(lanes, rng);
+    const n = (difficulty() > 0.5 && rng() < 0.4) ? 2 : 1;
+    for (let k = 0; k < Math.min(n, LANE_COUNT - 1); k++) {
+      obstacles.push({ lane: shuffledLanes[k], y: -60, o: OBSTACLES[Math.floor(rng() * OBSTACLES.length)], passed: false });
+    }
+  }
+
+  function burst(x, y) {
+    for (let i = 0; i < 8; i++) {
+      const a = rng() * Math.PI * 2;
+      const sp = 80 + rng() * 140;
+      sparks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0.6, color: SPARK_TINT[Math.floor(rng() * SPARK_TINT.length)] });
+    }
+  }
 
   function crash(x, y) {
     if (over) return;
     over = true;
     crashAt = { x, y };
-    setTimeout(() => api.finish(score, `${dodged} vehículos esquivados · ${Math.round(meters)} m`), 850);
+    flashT = 0.4;
+    setTimeout(() => api.finish(score, `${dodged} obstáculos esquivados`), 700);
   }
 
   function step(dt) {
-    if (over) return;
-    t += dt;
+    if (over) { if (flashT > 0) flashT = Math.max(0, flashT - dt); return; }
+    elapsedSec += dt;
+    const diff = difficulty();
 
-    if (level < LEVELS.length && t >= LEVELS[level][0]) {
-      notice = { text: LEVELS[level][1], t: 1.6 };
-      level++;
+    // marcador por tiempo
+    sinceScoreTick += dt * 1000;
+    while (sinceScoreTick >= SCORE_TICK_MS) {
+      sinceScoreTick -= SCORE_TICK_MS;
+      score += SCORE_TICK_VALUE;
     }
-    if (notice) { notice.t -= dt; if (notice.t <= 0) notice = null; }
 
-    const speed = Math.min(560, 250 + t * 9);
-    roadScroll = (roadScroll + speed * dt) % 60;
-    meters += speed * dt / 30;
+    // tuk-tuk se desliza al carril objetivo
+    playerX += (laneX(playerLane) - playerX) * Math.min(1, dt * 16);
 
-    laneF += (lane - laneF) * Math.min(1, dt * 14);
+    // scroll de rayas y palmeras
+    const speedMul = 1 + diff * 1.5;
+    stripeScroll = (stripeScroll + 240 * speedMul * dt) % 80;
+    palms.forEach(p => {
+      p.y += 200 * speedMul * dt;
+      if (p.y > H + 40) { p.y = -40; p.x = rng() < 0.5 ? ROAD_LEFT - 34 : ROAD_LEFT + ROAD_WIDTH + 34; }
+    });
 
+    // spawn
     untilSpawn -= dt;
     if (untilSpawn <= 0) {
-      spawnRow();
-      untilSpawn = Math.max(0.52, 1.1 - t * 0.011) + rng() * 0.15;
+      spawn();
+      const base = SPAWN_MAX_DELAY - diff * (SPAWN_MAX_DELAY - SPAWN_MIN_DELAY);
+      untilSpawn = Math.max(SPAWN_MIN_FLOOR, base) + rng() * 0.25;
     }
 
-    for (const row of rows) {
-      row.y += speed * dt;
-      if (!row.counted && row.y > PLAYER_Y + 26) {
-        row.counted = true;
-        dodged += row.cars.length;
-        score += row.cars.length * 50;
-        api.setScore(score);
+    // mover obstáculos
+    const speed = (OBSTACLE_SPEED_START + diff * (OBSTACLE_SPEED_MAX - OBSTACLE_SPEED_START)) * scaleY;
+    for (const ob of obstacles) {
+      ob.y += speed * dt;
+      const ox = laneX(ob.lane);
+      // colisión (mismo carril, solape vertical con el tuk-tuk)
+      if (!over && Math.abs(ob.lane - playerLane) < 0.5 && Math.abs(ob.y - PLAYER_Y) < 40 && Math.abs(ox - playerX) < LANE_WIDTH * 0.5) {
+        crash(playerX, PLAYER_Y);
       }
-      // colisión: mismo carril (±0.45) y solape vertical
-      for (const c of row.cars) {
-        if (Math.abs(c.lane - laneF) < 0.45 && Math.abs(row.y - PLAYER_Y) < 40) {
-          crash(laneX(c.lane), row.y);
-        }
+      // esquivado
+      if (!ob.passed && ob.y > PLAYER_Y + 30) {
+        ob.passed = true;
+        dodged++;
+        score += SCORE_PER_DODGE;
+        if (ob.lane === playerLane) burst(ox, PLAYER_Y); // near-miss: pasó por tu carril
       }
     }
-    rows = rows.filter(r => r.y < H + 80);
+    obstacles = obstacles.filter(o => o.y < H + 80);
+    api.setScore(score);
+
+    // chispas
+    for (const s of sparks) { s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt; }
+    sparks = sparks.filter(s => s.life > 0);
   }
 
   function draw() {
-    ctx.clearRect(0, 0, W, H);
+    // hierba de fondo
+    ctx.fillStyle = GRASS;
+    ctx.fillRect(0, 0, W, H);
 
-    // arcenes con decorado tailandés desplazándose
-    ctx.font = '22px serif';
-    ctx.textAlign = 'center';
-    for (let i = -1; i < H / 90 + 1; i++) {
-      const y = ((i * 90 + roadScroll * 1.5) % (H + 90));
-      const di = Math.abs(Math.floor((i * 90) / 90)) % DECOR.length;
-      ctx.globalAlpha = 0.85;
-      ctx.fillText(DECOR[di], ROAD_X / 2, y);
-      ctx.fillText(DECOR[(di + 3) % DECOR.length], W - ROAD_X / 2, y + 45);
-      ctx.globalAlpha = 1;
-    }
+    // palmeras (siluetas de círculos verdes)
+    palms.forEach(p => {
+      ctx.fillStyle = '#166534';
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#15803d';
+      ctx.beginPath(); ctx.arc(p.x, p.y - 16, p.r * 0.7, 0, Math.PI * 2); ctx.fill();
+    });
 
-    // carretera
-    ctx.fillStyle = '#060e20';
-    ctx.fillRect(ROAD_X, 0, ROAD_W, H);
-    ctx.strokeStyle = 'rgba(0,244,254,0.5)';
-    ctx.lineWidth = 2;
-    ctx.shadowColor = CYAN;
-    ctx.shadowBlur = 8;
-    ctx.beginPath();
-    ctx.moveTo(ROAD_X, 0); ctx.lineTo(ROAD_X, H);
-    ctx.moveTo(ROAD_X + ROAD_W, 0); ctx.lineTo(ROAD_X + ROAD_W, H);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+    // asfalto
+    ctx.fillStyle = ROADC;
+    ctx.fillRect(ROAD_LEFT, 0, ROAD_WIDTH, H);
+    // bordes blancos
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillRect(ROAD_LEFT, 0, 4, H);
+    ctx.fillRect(ROAD_LEFT + ROAD_WIDTH - 4, 0, 4, H);
 
-    // líneas discontinuas de carril
-    ctx.strokeStyle = 'rgba(235,178,255,0.35)';
-    ctx.lineWidth = 3;
-    ctx.setLineDash([26, 34]);
-    ctx.lineDashOffset = -roadScroll;
-    for (let l = 1; l < LANES; l++) {
-      ctx.beginPath();
-      ctx.moveTo(ROAD_X + LANE_W * l, -20);
-      ctx.lineTo(ROAD_X + LANE_W * l, H + 20);
-      ctx.stroke();
-    }
-    ctx.setLineDash([]);
-
-    // tráfico
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    for (const row of rows) {
-      for (const c of row.cars) {
-        ctx.font = c.emoji === '🐘' || c.emoji === '🚌' || c.emoji === '🚚' ? '34px serif' : '30px serif';
-        ctx.shadowColor = PINK;
-        ctx.shadowBlur = 10;
-        ctx.fillText(c.emoji, laneX(c.lane), row.y);
-        ctx.shadowBlur = 0;
+    // rayas de carril discontinuas amarillas
+    ctx.fillStyle = STRIPE;
+    for (let l = 1; l < LANE_COUNT; l++) {
+      const x = ROAD_LEFT + LANE_WIDTH * l - 3;
+      for (let y = -80 + stripeScroll; y < H; y += 80) {
+        ctx.fillRect(x, y, 6, 40);
       }
     }
 
-    // tu tuk-tuk
-    ctx.font = '34px serif';
-    ctx.shadowColor = CYAN;
-    ctx.shadowBlur = 16;
-    ctx.fillText('🛺', laneX(laneF), PLAYER_Y);
-    ctx.shadowBlur = 0;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
 
-    // marcador de metros
-    ctx.font = '700 13px Space Grotesk, monospace';
-    ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(218,226,253,0.55)';
-    ctx.fillText(`${Math.round(meters)} m`, 12, 22);
-
-    if (notice) {
-      ctx.font = '800 26px Lexend, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#ebb2ff';
-      ctx.globalAlpha = Math.min(1, notice.t * 2);
-      ctx.shadowColor = '#bc13fe';
-      ctx.shadowBlur = 22;
-      ctx.fillText(notice.text, W / 2, H * 0.25);
-      ctx.globalAlpha = 1;
+    // obstáculos
+    for (const ob of obstacles) {
+      ctx.font = `${ob.o.size}px serif`;
+      ctx.shadowColor = ob.o.glow;
+      ctx.shadowBlur = 14;
+      ctx.fillText(ob.o.emoji, laneX(ob.lane), ob.y);
       ctx.shadowBlur = 0;
     }
+
+    // chispas
+    for (const s of sparks) {
+      ctx.globalAlpha = Math.max(0, s.life / 0.6);
+      ctx.fillStyle = s.color;
+      ctx.beginPath(); ctx.arc(s.x, s.y, 3, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // tuk-tuk (mirando hacia arriba)
+    ctx.font = '40px serif';
+    ctx.shadowColor = '#f97316';
+    ctx.shadowBlur = 16;
+    ctx.fillText('🛺', playerX, PLAYER_Y);
+    ctx.shadowBlur = 0;
+
+    // marcador de esquivados arriba
+    ctx.font = '700 13px Space Grotesk, monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText(`ESQUIVADOS ${dodged}`, 12, 20);
 
     if (crashAt) {
       ctx.font = '40px serif';
       ctx.textAlign = 'center';
-      ctx.fillText('💥', crashAt.x, Math.min(crashAt.y, H - 20));
+      ctx.fillText('💥', crashAt.x, crashAt.y);
       ctx.font = '800 34px Lexend, sans-serif';
       ctx.fillStyle = '#ff5470';
       ctx.shadowColor = '#ff5470';
       ctx.shadowBlur = 20;
-      ctx.fillText('¡CRASH!', W / 2, H * 0.35);
+      ctx.fillText('¡CHOQUE!', W / 2, H * 0.32);
       ctx.shadowBlur = 0;
+    }
+
+    if (flashT > 0) {
+      ctx.fillStyle = `rgba(255,68,68,${flashT})`;
+      ctx.fillRect(0, 0, W, H);
     }
   }
 
@@ -1953,7 +2002,7 @@ const GAMES = [
   { id: 'flip', icon: '🤸', name: 'Flip Jump', desc: 'Carga el salto, suelta y aterriza el mortal en la siguiente plataforma.', run: gameFlip },
   { id: 'duet', icon: '☯️', name: 'Dúo Neón', desc: 'Gira las dos esferas y esquiva los bloques que caen. Un golpe y fuera.', run: gameDuet },
   { id: 'stairs', icon: '🪜', name: 'Escalera Infinita', desc: 'SUBIR sigue recto, GIRAR cambia de lado. Ni un paso al vacío y no te quedes sin energía.', run: gameStairs },
-  { id: 'tuktuk', icon: '🛺', name: 'Tuk-Tuk Rush', desc: 'Esquiva el tráfico de Bangkok con tu tuk-tuk. ¡Cuidado con los elefantes!', run: gameTuktuk },
+  { id: 'tuktuk', icon: '🛺', name: 'TukTuk Dodge', desc: 'Cambia de carril con tu tuk-tuk y esquiva elefantes, motos y artistas por las calles de Bangkok.', run: gameTuktuk },
   { id: 'jumpy', icon: '🦘', name: 'Jumpy Neón', desc: 'Rebota de plataforma en plataforma y sube lo más alto que puedas. ¡No caigas!', run: gameJumpy },
   { id: 'trafix', icon: '🚦', name: 'Cruce Loco', desc: 'Toca los coches para frenarlos o arrancarlos y evita choques en el cruce.', run: gameTrafix },
   { id: 'bowl', icon: '🥣', name: 'Bol Glotón', desc: 'Atrapa la comida que cae con tu bol y esquiva los objetos tóxicos. 3 vidas.', run: gameBowl },
