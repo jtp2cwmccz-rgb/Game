@@ -326,7 +326,7 @@ function gameDuet(stage, rng, api) {
 
   let angle = 0;                  // esferas empiezan en horizontal
   let dir = 0;                    // -1 izquierda, +1 derecha
-  let obstacles = [];             // { x, w, y, h, counted }
+  let obstacles = [];             // { x, w, y, h, angle, spin, counted }
   let trail = [];
   let t = 0;
   let untilSpawn = 0.6;
@@ -334,27 +334,47 @@ function gameDuet(stage, rng, api) {
   let passed = 0;
   let over = false;
   let hitAt = null;               // { x, y, color }
+  let notice = null;              // aviso de subida de nivel { text, t }
+  let level = 0;
   let raf = null;
   let last = performance.now();
 
+  /* subida de dificultad por fases */
+  const LEVELS = [
+    [10, '¡PIEZAS GIRATORIAS!'],
+    [22, '¡MÁS RÁPIDO!'],
+    [38, '¡MODO FRENESÍ!'],
+  ];
+
+  /* probabilidad y velocidad de giro crecen con la partida */
+  function makeSpin() {
+    if (t < LEVELS[0][0]) return 0;
+    const chance = Math.min(0.85, 0.35 + (t - LEVELS[0][0]) * 0.02);
+    if (rng() > chance) return 0;
+    const sgn = rng() < 0.5 ? -1 : 1;
+    return sgn * (0.6 + rng() * 0.8 + Math.min(1.4, t * 0.02));
+  }
+
   /* patrones esquivables: pared izquierda/derecha (esferas en vertical),
-     bloque central ancho o estrecho (esferas en horizontal), o laterales dobles */
+     bloque central ancho o estrecho (esferas en horizontal), o laterales dobles.
+     Los bloques centrales pueden girar sobre sí mismos. */
   function spawn() {
     const kind = Math.floor(rng() * 5);
     const h = 26;
     const y = -h - 10;
     if (kind === 0) {
-      obstacles.push({ x: CX - ORBIT * 0.75, w: ORBIT * 1.5, y, h, counted: false });
+      obstacles.push({ x: CX - ORBIT * 0.75, w: ORBIT * 1.5, y, h, angle: 0, spin: makeSpin(), counted: false });
     } else if (kind === 1) {
-      obstacles.push({ x: 0, w: CX - ORBIT * 0.4, y, h, counted: false });
+      obstacles.push({ x: 0, w: CX - ORBIT * 0.4, y, h, angle: 0, spin: 0, counted: false });
     } else if (kind === 2) {
-      obstacles.push({ x: CX + ORBIT * 0.4, w: W - (CX + ORBIT * 0.4), y, h, counted: false });
+      obstacles.push({ x: CX + ORBIT * 0.4, w: W - (CX + ORBIT * 0.4), y, h, angle: 0, spin: 0, counted: false });
     } else if (kind === 3) {
-      obstacles.push({ x: CX - 24, w: 48, y, h, counted: false });
+      obstacles.push({ x: CX - 24, w: 48, y, h, angle: 0, spin: makeSpin() * 1.5, counted: false });
     } else {
-      const gap = ORBIT * 1.15;
-      obstacles.push({ x: 0, w: CX - gap / 2, y, h, counted: false });
-      obstacles.push({ x: CX + gap / 2, w: W - (CX + gap / 2), y, h, counted: true }); // solo puntúa una del par
+      // el hueco central se estrecha con el tiempo
+      const gap = ORBIT * Math.max(0.9, 1.15 - t * 0.004);
+      obstacles.push({ x: 0, w: CX - gap / 2, y, h, angle: 0, spin: 0, counted: false });
+      obstacles.push({ x: CX + gap / 2, w: W - (CX + gap / 2), y, h, angle: 0, spin: 0, counted: true }); // solo puntúa una del par
     }
   }
 
@@ -364,9 +384,15 @@ function gameDuet(stage, rng, api) {
   }
 
   function hitTest(o, p) {
-    const nx = Math.max(o.x, Math.min(p.x, o.x + o.w));
-    const ny = Math.max(o.y, Math.min(p.y, o.y + o.h));
-    return (p.x - nx) ** 2 + (p.y - ny) ** 2 < ORB * ORB;
+    // círculo contra rectángulo rotado: pasar la esfera al sistema local de la pieza
+    const rcx = o.x + o.w / 2, rcy = o.y + o.h / 2;
+    const ca = Math.cos(o.angle), sa = Math.sin(o.angle);
+    const dx = p.x - rcx, dy = p.y - rcy;
+    const lx = dx * ca + dy * sa;
+    const ly = -dx * sa + dy * ca;
+    const nx = Math.max(-o.w / 2, Math.min(lx, o.w / 2));
+    const ny = Math.max(-o.h / 2, Math.min(ly, o.h / 2));
+    return (lx - nx) ** 2 + (ly - ny) ** 2 < ORB * ORB;
   }
 
   function setDir(clientX) {
@@ -391,11 +417,18 @@ function gameDuet(stage, rng, api) {
     t += dt;
     angle += dir * SPIN * dt;
 
-    const speed = 170 + t * 7;
+    // aviso al subir de nivel
+    if (level < LEVELS.length && t >= LEVELS[level][0]) {
+      notice = { text: LEVELS[level][1], t: 1.6 };
+      level++;
+    }
+    if (notice) { notice.t -= dt; if (notice.t <= 0) notice = null; }
+
+    const speed = Math.min(430, 170 + t * 8);
     untilSpawn -= dt;
     if (untilSpawn <= 0) {
       spawn();
-      untilSpawn = Math.max(0.85, 1.55 - t * 0.012) + rng() * 0.25;
+      untilSpawn = Math.max(0.62, 1.55 - t * 0.018) + rng() * 0.25;
     }
 
     const p0 = orbPos(0), p1 = orbPos(1);
@@ -404,6 +437,7 @@ function gameDuet(stage, rng, api) {
 
     for (const o of obstacles) {
       o.y += speed * dt;
+      o.angle += o.spin * dt;
       if (!o.counted && o.y > CY + ORBIT + ORB) {
         o.counted = true;
         passed++;
@@ -432,15 +466,19 @@ function gameDuet(stage, rng, api) {
     ctx.arc(CX, CY, ORBIT, 0, Math.PI * 2);
     ctx.stroke();
 
-    // bloques
+    // bloques (con rotación)
     for (const o of obstacles) {
+      ctx.save();
+      ctx.translate(o.x + o.w / 2, o.y + o.h / 2);
+      ctx.rotate(o.angle);
       ctx.fillStyle = '#dae2fd';
-      ctx.shadowColor = '#dae2fd';
-      ctx.shadowBlur = 10;
+      ctx.shadowColor = o.spin ? '#ebb2ff' : '#dae2fd';
+      ctx.shadowBlur = o.spin ? 16 : 10;
       ctx.beginPath();
-      ctx.roundRect(o.x, o.y, o.w, o.h, 6);
+      ctx.roundRect(-o.w / 2, -o.h / 2, o.w, o.h, 6);
       ctx.fill();
       ctx.shadowBlur = 0;
+      ctx.restore();
     }
 
     // estelas
@@ -463,6 +501,19 @@ function gameDuet(stage, rng, api) {
       ctx.beginPath(); ctx.arc(p.x, p.y, ORB, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
     });
+
+    // aviso de subida de nivel
+    if (notice) {
+      ctx.font = '800 26px Lexend, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ebb2ff';
+      ctx.globalAlpha = Math.min(1, notice.t * 2);
+      ctx.shadowColor = '#bc13fe';
+      ctx.shadowBlur = 22;
+      ctx.fillText(notice.text, W / 2, H * 0.28);
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
+    }
 
     // impacto: salpicadura y aviso
     if (hitAt) {
