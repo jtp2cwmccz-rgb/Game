@@ -818,18 +818,25 @@ function gameTuktuk(stage, rng, api) {
   // colores del original (PALETTE / fallback textures)
   const GRASS = '#14532d', ROADC = '#2b3547', STRIPE = '#fbbf24';
   const SPARK_TINT = ['#fbbf24', '#f97316', '#ec4899', '#3b82f6', '#10b981'];
-  // roster de obstáculos: emoji + glow del color de su textura fallback
+  // roster de obstáculos: emoji + glow del color de su textura fallback.
+  // weight = probabilidad relativa; spin = giro por frame (solo el artista gira).
   const OBSTACLES = [
-    { emoji: '🐘', glow: '#6b7280', size: 46, name: 'elefante' },
-    { emoji: '🏍️', glow: '#3b82f6', size: 34, name: 'moto' },
-    { emoji: '💃', glow: '#ec4899', size: 36, name: 'artista' },
+    { emoji: '🏍️', glow: '#3b82f6', size: 34, weight: 5, spin: 0,    name: 'moto' },
+    { emoji: '💃', glow: '#ec4899', size: 36, weight: 3, spin: 0.6,  name: 'artista' },
+    { emoji: '🐘', glow: '#6b7280', size: 46, weight: 2, spin: 0,    name: 'elefante' },
   ];
+  const TOTAL_WEIGHT = OBSTACLES.reduce((s, o) => s + o.weight, 0);
+  function pickObstacle() {
+    let r = rng() * TOTAL_WEIGHT;
+    for (const o of OBSTACLES) { if (r < o.weight) return o; r -= o.weight; }
+    return OBSTACLES[0];
+  }
 
   const scaleY = H / 768;
 
   let playerLane = PLAYER_START_LANE;
   let playerX = laneX(playerLane);
-  let obstacles = [];            // { lane, y, o, passed }
+  let obstacles = [];            // { lane, y, o, rot, passed }
   let sparks = [];               // { x, y, vx, vy, life, color }
   let palms = [];                // decorado lateral { x, y, r }
   let stripeScroll = 0;
@@ -869,15 +876,16 @@ function gameTuktuk(stage, rng, api) {
   };
   window.addEventListener('keydown', onKey);
 
-  function spawn() {
-    // un obstáculo en un carril al azar; con dificultad alta, a veces dos
-    // en carriles distintos dejando siempre al menos uno libre.
-    const lanes = [];
-    for (let l = 0; l < LANE_COUNT; l++) lanes.push(l);
-    const shuffledLanes = shuffled(lanes, rng);
-    const n = (difficulty() > 0.5 && rng() < 0.4) ? 2 : 1;
-    for (let k = 0; k < Math.min(n, LANE_COUNT - 1); k++) {
-      obstacles.push({ lane: shuffledLanes[k], y: -60, o: OBSTACLES[Math.floor(rng() * OBSTACLES.length)], passed: false });
+  function spawnObstacle() {
+    // tipo por peso; un obstáculo en carril al azar.
+    const type = pickObstacle();
+    const lane = Math.floor(rng() * LANE_COUNT);
+    obstacles.push({ lane, y: -60, o: type, rot: 0, passed: false });
+    // bonus: con dificultad > 0.4, a veces un segundo en otro carril, escalonado.
+    if (difficulty() > 0.4 && rng() < 0.25) {
+      let lane2;
+      do { lane2 = Math.floor(rng() * LANE_COUNT); } while (lane2 === lane);
+      obstacles.push({ lane: lane2, y: -60 - (60 + rng() * 140), o: type, rot: 0, passed: false });
     }
   }
 
@@ -920,29 +928,31 @@ function gameTuktuk(stage, rng, api) {
       if (p.y > H + 40) { p.y = -40; p.x = rng() < 0.5 ? ROAD_LEFT - 34 : ROAD_LEFT + ROAD_WIDTH + 34; }
     });
 
-    // spawn
+    // spawn (delay se encoge con la dificultad)
     untilSpawn -= dt;
     if (untilSpawn <= 0) {
-      spawn();
-      const base = SPAWN_MAX_DELAY - diff * (SPAWN_MAX_DELAY - SPAWN_MIN_DELAY);
-      untilSpawn = Math.max(SPAWN_MIN_FLOOR, base) + rng() * 0.25;
+      spawnObstacle();
+      const maxDelay = SPAWN_MAX_DELAY - (SPAWN_MAX_DELAY - SPAWN_MIN_FLOOR) * diff;
+      const minDelay = Math.max(SPAWN_MIN_FLOOR, SPAWN_MIN_DELAY - diff * 0.3);
+      untilSpawn = minDelay + rng() * Math.max(0, maxDelay - minDelay);
     }
 
-    // mover obstáculos
-    const speed = (OBSTACLE_SPEED_START + diff * (OBSTACLE_SPEED_MAX - OBSTACLE_SPEED_START)) * scaleY;
+    // mover obstáculos: velocidad = START * (1 + diff*1.5), como el original
+    const speed = Math.min(OBSTACLE_SPEED_MAX, OBSTACLE_SPEED_START * speedMul) * scaleY;
     for (const ob of obstacles) {
       ob.y += speed * dt;
+      ob.rot += ob.o.spin * dt * 8;            // el artista gira sobre sí mismo
       const ox = laneX(ob.lane);
       // colisión (mismo carril, solape vertical con el tuk-tuk)
       if (!over && Math.abs(ob.lane - playerLane) < 0.5 && Math.abs(ob.y - PLAYER_Y) < 40 && Math.abs(ox - playerX) < LANE_WIDTH * 0.5) {
         crash(playerX, PLAYER_Y);
       }
-      // esquivado
-      if (!ob.passed && ob.y > PLAYER_Y + 30) {
+      // esquivado: al pasar al jugador. Chispa si venía de un carril ADYACENTE.
+      if (!ob.passed && ob.y > PLAYER_Y + 60) {
         ob.passed = true;
         dodged++;
         score += SCORE_PER_DODGE;
-        if (ob.lane === playerLane) burst(ox, PLAYER_Y); // near-miss: pasó por tu carril
+        if (Math.abs(ob.lane - playerLane) === 1) burst(laneX(playerLane), PLAYER_Y);
       }
     }
     obstacles = obstacles.filter(o => o.y < H + 80);
@@ -986,13 +996,17 @@ function gameTuktuk(stage, rng, api) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    // obstáculos
+    // obstáculos (el artista gira con ob.rot)
     for (const ob of obstacles) {
+      ctx.save();
+      ctx.translate(laneX(ob.lane), ob.y);
+      if (ob.rot) ctx.rotate(ob.rot);
       ctx.font = `${ob.o.size}px serif`;
       ctx.shadowColor = ob.o.glow;
       ctx.shadowBlur = 14;
-      ctx.fillText(ob.o.emoji, laneX(ob.lane), ob.y);
+      ctx.fillText(ob.o.emoji, 0, 0);
       ctx.shadowBlur = 0;
+      ctx.restore();
     }
 
     // chispas
