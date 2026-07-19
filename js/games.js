@@ -1002,6 +1002,232 @@ function gameTuktuk(stage, rng, api) {
 }
 
 /* ============================================================
+   JUMPY NEÓN (estilo Doodle Jump / "Jumpy")
+   Rebotas sin parar: guía al personaje con izquierda/derecha para
+   aterrizar en las plataformas y subir lo más alto posible. Hay
+   plataformas móviles, muelles que impulsan y bordes que teletransportan.
+   Si caes al vacío, fin de la partida.
+   ============================================================ */
+function gameJumpy(stage, rng, api) {
+  const wrap = el('div', 'flip-wrap');
+  const canvas = el('canvas', 'flip-canvas');
+  const hint = el('p', 'stage-timer', 'MANTÉN IZQUIERDA / DERECHA PARA MOVERTE');
+  wrap.append(canvas, hint);
+  stage.append(wrap);
+
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
+
+  (function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width;
+    H = Math.max(340, r.height - 40);
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  })();
+
+  const G = 1800;
+  const BOUNCE = -760;
+  const SPRING = -1180;
+  const PW = 64, PH = 12;
+  const CYAN = '#00f4fe', PINK = '#ff007a', PURPLE = '#bc13fe';
+  const avatar = (typeof state !== 'undefined' && state.profile) ? state.profile.avatar : '🦊';
+
+  let px = W / 2, py = H - 90;
+  let vx = 0, vy = BOUNCE;
+  let move = 0;                  // -1 | 0 | +1
+  let ascent = 0;                // desplazamiento total de cámara (altura ganada)
+  let genY = H - 40;             // siguiente altura (en mundo-pantalla) donde generar plataforma
+  let platforms = [];            // { x, y, w, type: 'normal'|'move'|'spring', dir, hitFlash }
+  let score = 0;
+  let over = false;
+  let raf = null;
+  let last = performance.now();
+
+  function difficulty() { return ascent; }
+
+  function addPlatform(y) {
+    const h = difficulty();
+    const type = (h > 700 && rng() < Math.min(0.35, 0.08 + h * 0.00006)) ? 'move'
+      : (rng() < 0.09 ? 'spring' : 'normal');
+    platforms.push({
+      x: rng() * (W - PW),
+      y,
+      w: PW,
+      type,
+      dir: rng() < 0.5 ? -1 : 1,
+    });
+  }
+
+  // suelo inicial + plataformas hacia arriba (más densas al principio)
+  platforms.push({ x: W / 2 - PW / 2, y: H - 60, w: PW, type: 'normal', dir: 1 });
+  while (genY > -H) {
+    genY -= (genY > H * 0.35 ? 42 + rng() * 16 : 52 + rng() * 26);
+    addPlatform(genY);
+  }
+
+  function setMove(clientX) {
+    const r = canvas.getBoundingClientRect();
+    move = clientX < r.left + r.width / 2 ? -1 : 1;
+  }
+  canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); setMove(e.clientX); });
+  canvas.addEventListener('pointermove', (e) => { if (move !== 0) setMove(e.clientX); });
+  const stopMove = () => { move = 0; };
+  window.addEventListener('pointerup', stopMove);
+  const onKey = (e) => {
+    if (e.type === 'keydown') {
+      if (e.key === 'ArrowLeft') move = -1;
+      if (e.key === 'ArrowRight') move = 1;
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') move = 0;
+  };
+  window.addEventListener('keydown', onKey);
+  window.addEventListener('keyup', onKey);
+
+  function step(dt) {
+    if (over) return;
+
+    vx += (move * 300 - vx) * Math.min(1, dt * 10);
+    px += vx * dt;
+    // los bordes teletransportan al lado contrario (clásico del género)
+    if (px < -14) px = W + 14;
+    if (px > W + 14) px = -14;
+
+    vy += G * dt;
+    py += vy * dt;
+
+    // rebote solo cayendo
+    if (vy > 0) {
+      for (const p of platforms) {
+        if (px > p.x - 12 && px < p.x + p.w + 12 && py + 16 > p.y && py + 16 < p.y + PH + vy * dt + 4) {
+          if (p.type === 'spring') { vy = SPRING; p.hitFlash = 0.5; }
+          else { vy = BOUNCE; p.hitFlash = 0.25; }
+          py = p.y - 16;
+          break;
+        }
+      }
+    }
+
+    // plataformas móviles: más rápidas cuanto más alto
+    const mvSpeed = 60 + Math.min(120, difficulty() * 0.02);
+    for (const p of platforms) {
+      if (p.type === 'move') {
+        p.x += p.dir * mvSpeed * dt;
+        if (p.x < 0) { p.x = 0; p.dir = 1; }
+        if (p.x + p.w > W) { p.x = W - p.w; p.dir = -1; }
+      }
+      if (p.hitFlash) p.hitFlash = Math.max(0, p.hitFlash - dt);
+    }
+
+    // cámara: al superar el 45% de la pantalla, el mundo baja
+    const lift = H * 0.45 - py;
+    if (lift > 0) {
+      py += lift;
+      ascent += lift;
+      genY += lift;
+      platforms.forEach(p => { p.y += lift; });
+      score = Math.round(ascent / 4);
+      api.setScore(score);
+      // generar nuevas plataformas arriba (separación crece con la altura)
+      while (genY > -60) {
+        genY -= 52 + Math.min(52, difficulty() * 0.01) + rng() * 26;
+        addPlatform(genY);
+      }
+    }
+    platforms = platforms.filter(p => p.y < H + 30);
+
+    if (py > H + 40) {
+      over = true;
+      setTimeout(() => api.finish(score, `${Math.round(ascent / 30)} m de altura`), 700);
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // rejilla que se desplaza con la subida
+    ctx.strokeStyle = 'rgba(235,178,255,0.06)';
+    ctx.lineWidth = 1;
+    const gs = 40;
+    const gy = (ascent % gs);
+    for (let y = gy - gs; y < H; y += gs) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+    for (let x = 0; x < W; x += gs) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+
+    // plataformas
+    for (const p of platforms) {
+      const col = p.type === 'spring' ? PINK : p.type === 'move' ? PURPLE : CYAN;
+      ctx.fillStyle = '#171f33';
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = col;
+      ctx.shadowBlur = p.hitFlash ? 20 : 9;
+      ctx.beginPath();
+      ctx.roundRect(p.x, p.y, p.w, PH, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      if (p.type === 'spring') {
+        ctx.font = '11px serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = PINK;
+        ctx.fillText('▲', p.x + p.w / 2, p.y - 4);
+      }
+    }
+
+    // personaje
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(Math.max(-0.25, Math.min(0.25, vx / 1200)));
+    ctx.font = '30px serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = '#ebb2ff';
+    ctx.shadowBlur = 14;
+    ctx.fillText(avatar, 0, 0);
+    ctx.restore();
+
+    // altura
+    ctx.font = '700 13px Space Grotesk, monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(218,226,253,0.55)';
+    ctx.fillText(`${Math.round(ascent / 30)} m`, 12, 22);
+
+    if (over) {
+      ctx.font = '800 34px Lexend, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ff5470';
+      ctx.shadowColor = '#ff5470';
+      ctx.shadowBlur = 20;
+      ctx.fillText('¡CAÍSTE!', W / 2, H * 0.4);
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  function loop(now) {
+    if (api.done) return;
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    step(dt);
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+  raf = requestAnimationFrame(loop);
+
+  api.onQuit = () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener('pointerup', stopMove);
+    window.removeEventListener('keydown', onKey);
+    window.removeEventListener('keyup', onKey);
+  };
+}
+
+/* ============================================================
    Catálogo — la rotación diaria escoge uno por fecha
    ============================================================ */
 const GAMES = [
@@ -1009,4 +1235,5 @@ const GAMES = [
   { id: 'duet', icon: '☯️', name: 'Dúo Neón', desc: 'Gira las dos esferas y esquiva los bloques que caen. Un golpe y fuera.', run: gameDuet },
   { id: 'stairs', icon: '🪜', name: 'Escalera Infinita', desc: 'SUBIR sigue recto, GIRAR cambia de lado. Ni un paso al vacío y no te quedes sin energía.', run: gameStairs },
   { id: 'tuktuk', icon: '🛺', name: 'Tuk-Tuk Rush', desc: 'Esquiva el tráfico de Bangkok con tu tuk-tuk. ¡Cuidado con los elefantes!', run: gameTuktuk },
+  { id: 'jumpy', icon: '🦘', name: 'Jumpy Neón', desc: 'Rebota de plataforma en plataforma y sube lo más alto que puedas. ¡No caigas!', run: gameJumpy },
 ];
