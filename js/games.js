@@ -1723,11 +1723,8 @@ function gameBeer(stage, rng, api) {
   const powerWrap = el('div', 'flip-power');
   const powerFill = el('div', 'flip-power-fill');
   powerWrap.append(powerFill);
-  const controls = el('div', 'stairs-controls');
-  const btnPour = el('button', 'btn-3d btn-pink', '🚰 TIRAR');
-  const btnServe = el('button', 'btn-3d btn-cyan', '🍺 SERVIR');
-  controls.append(btnPour, btnServe);
-  wrap.append(canvas, powerWrap, controls);
+  const btnPour = el('button', 'btn-3d btn-primary btn-block', '🍺 MANTÉN PARA TIRAR · SUELTA PARA SERVIR');
+  wrap.append(canvas, powerWrap, btnPour);
   stage.append(wrap);
 
   const ctx = canvas.getContext('2d');
@@ -1817,17 +1814,20 @@ function gameBeer(stage, rng, api) {
     setTimeout(nextRound, 1400);
   }
 
-  const startPour = (e) => { e.preventDefault(); if (!over && !waiting) pouring = true; };
-  const stopPour = () => { pouring = false; };
+  // un solo intento por cliente: mantén para tirar, al soltar se sirve.
+  const startPour = (e) => { if (e) e.preventDefault(); if (!over && !waiting) pouring = true; };
+  const stopPour = () => {
+    if (!pouring) return;
+    pouring = false;
+    if (level > 0.03 && !waiting && !over && spillT === 0) serve();
+  };
   btnPour.addEventListener('pointerdown', startPour);
   window.addEventListener('pointerup', stopPour);
-  btnServe.addEventListener('pointerdown', (e) => { e.preventDefault(); serve(); });
   const onKey = (e) => {
     if (e.key === ' ' || e.key === 'ArrowDown') {
-      if (e.type === 'keydown') { if (!over && !waiting) pouring = true; }
-      else pouring = false;
+      if (e.type === 'keydown') startPour();
+      else stopPour();
     }
-    if (e.key === 'Enter' && e.type === 'keydown') serve();
   };
   window.addEventListener('keydown', onKey);
   window.addEventListener('keyup', onKey);
@@ -2568,6 +2568,178 @@ function gameBlackjack(stage, rng, api) {
   api.onQuit = () => cancelAnimationFrame(raf);
 }
 
+
+/* ============================================================
+   JENGA NEÓN (saca bloques sin que caiga la torre)
+   Toca un bloque para sacarlo. Cada extracción inclina la torre
+   según el lado; alterna izquierda/derecha para mantener el
+   equilibrio y no dejes una fila vacía. Si se inclina demasiado
+   o quitas un apoyo clave, se derrumba.
+   ============================================================ */
+function gameJenga(stage, rng, api) {
+  const wrap = el('div', 'flip-wrap');
+  const canvas = el('canvas', 'flip-canvas');
+  const hint = el('p', 'stage-timer', 'TOCA UN BLOQUE PARA SACARLO · MANTÉN EL EQUILIBRIO');
+  wrap.append(canvas, hint);
+  stage.append(wrap);
+
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
+  (function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width; H = Math.max(360, r.height - 40);
+    canvas.width = W * DPR; canvas.height = H * DPR;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  })();
+
+  const COLS = 3;
+  const BW = Math.min(W * 0.19, 74);       // ancho de bloque
+  const BH = 22;                            // alto de bloque
+  const GAP = 3;
+  const TOWER_W = COLS * BW + (COLS - 1) * GAP;
+  const BASE_X = W / 2;
+  const BASE_Y = H - 30;
+
+  // rows[i] = [bool,bool,bool] de abajo (0) hacia arriba
+  let rows = [];
+  const START_ROWS = 7;
+  for (let i = 0; i < START_ROWS; i++) rows.push([true, true, true]);
+  let topStack = 0;                         // bloques colocados arriba (crecen la torre)
+
+  let bal = 0;                              // inclinación −1..1
+  let wobble = 0;                           // temblor visual
+  let score = 0, pulled = 0, streak = 0;
+  let over = false, collapse = 0, notice = null;
+  let raf = null, last = performance.now();
+
+  function rowY(i) { return BASE_Y - (i + 1) * (BH + GAP); }
+  function blockX(c) { return BASE_X - TOWER_W / 2 + c * (BW + GAP) + BW / 2; }
+
+  function present(i) { return rows[i].filter(Boolean).length; }
+
+  function collapseNow(msg) {
+    if (over) return;
+    over = true; collapse = 0.01;
+    notice = msg;
+    setTimeout(() => api.finish(score, `${pulled} bloques sacados`), 1100);
+  }
+
+  function pull(i, c) {
+    if (over || !rows[i] || !rows[i][c]) return;
+    // no se puede sacar de la fila superior de apoyo ni de la fila más alta jugable
+    if (i >= rows.length - 1) return;
+    // sacar el último bloque de una fila => sin apoyo => se cae
+    if (present(i) <= 1) { rows[i][c] = false; collapseNow('¡SIN APOYO!'); return; }
+
+    rows[i][c] = false;
+    pulled++;
+    // desequilibrio: mayor cuanto más arriba y más central
+    const height = i / rows.length;
+    const w = 0.1 + height * 0.13 + rng() * 0.05;
+    const prevBal = bal;
+    if (c === 0) bal -= w;                  // quitas apoyo izquierdo → cae a la izq
+    else if (c === 2) bal += w;             // apoyo derecho → cae a la der
+    else bal += (rng() < 0.5 ? -1 : 1) * w * 0.4;  // central: poco tilt, algo de temblor
+    wobble = Math.min(1, wobble + 0.25 + height * 0.2);
+
+    // combo: si acercas la torre al equilibrio, bonus
+    let pts = 50;
+    if (Math.abs(bal) < Math.abs(prevBal)) { streak++; pts += 25 * streak; }
+    else streak = 0;
+    score += pts;
+    api.setScore(score);
+
+    // colocar el bloque arriba: cada 3 sacados, nueva fila completa (crece la torre)
+    topStack++;
+    if (topStack >= 3) { topStack = 0; rows.push([true, true, true]); }
+
+    if (Math.abs(bal) >= 1) collapseNow(bal > 0 ? '¡SE CAE A LA DERECHA!' : '¡SE CAE A LA IZQUIERDA!');
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (over) return;
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    for (let i = 0; i < rows.length; i++) {
+      const y = rowY(i);
+      if (my < y - 2 || my > y + BH + 2) continue;
+      for (let c = 0; c < COLS; c++) {
+        const x = blockX(c);
+        if (mx >= x - BW / 2 && mx <= x + BW / 2) { pull(i, c); return; }
+      }
+    }
+  });
+
+  function step(dt) {
+    wobble = Math.max(0, wobble - dt * 0.8);
+    if (over && collapse > 0) collapse = Math.min(1, collapse + dt * 1.6);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#160e2e'); g.addColorStop(1, '#0b1326');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+    // desplazar cámara si la torre crece por encima de la pantalla
+    const topY = rowY(rows.length - 1);
+    const camShift = topY < H * 0.16 ? H * 0.16 - topY : 0;
+
+    ctx.save();
+    // pivota la torre en su base según la inclinación
+    ctx.translate(BASE_X, BASE_Y + camShift);
+    const tilt = bal * 0.18 + (over ? (bal >= 0 ? 1 : -1) * collapse * 1.3 : 0);
+    const shake = wobble * Math.sin(performance.now() / 40) * 3;
+    ctx.rotate(tilt);
+    ctx.translate(-BASE_X + shake, -(BASE_Y + camShift));
+
+    for (let i = 0; i < rows.length; i++) {
+      const y = rowY(i) + camShift;
+      for (let c = 0; c < COLS; c++) {
+        if (!rows[i][c]) continue;
+        const x = blockX(c) - BW / 2;
+        const topRow = i >= rows.length - 1;
+        ctx.fillStyle = topRow ? 'hsl(280 80% 42%)' : `hsl(${(30 + i * 10) % 60 + 20} 85% ${46 + (i % 2) * 6}%)`;
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.roundRect(x, y, BW, BH, 3); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(x + 3, y + BH - 5, BW - 6, 3);
+      }
+    }
+    ctx.restore();
+
+    // indicador de equilibrio
+    const bx = 20, by = 26, bw = W - 40;
+    ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fillRect(bx, by, bw, 6);
+    ctx.fillStyle = Math.abs(bal) > 0.7 ? '#ff5470' : Math.abs(bal) > 0.4 ? '#ffd76a' : '#3dff9a';
+    const cx = bx + bw / 2 + bal * bw / 2;
+    ctx.beginPath(); ctx.arc(cx, by + 3, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(218,226,253,0.4)'; ctx.fillRect(bx + bw / 2 - 1, by - 3, 2, 12);
+    ctx.font = '700 11px Space Grotesk, monospace'; ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(218,226,253,0.6)'; ctx.fillText(`BLOQUES ${pulled}`, bx, by + 22);
+
+    if (streak > 1 && !over) {
+      ctx.textAlign = 'right'; ctx.fillStyle = '#3dff9a';
+      ctx.fillText(`EQUILIBRIO ×${streak}`, W - 20, by + 22);
+    }
+    if (over && notice) {
+      ctx.font = '800 30px Lexend, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = '#ff5470'; ctx.shadowColor = '#ff5470'; ctx.shadowBlur = 20;
+      ctx.fillText(notice, W / 2, H * 0.3); ctx.shadowBlur = 0;
+    }
+  }
+
+  function loop(now) {
+    if (api.done) return;
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    step(dt); draw(); raf = requestAnimationFrame(loop);
+  }
+  raf = requestAnimationFrame(loop);
+  api.onQuit = () => cancelAnimationFrame(raf);
+}
+
 /* ============================================================
    Iconos de línea (estilo design system de Stitch: Material
    Symbols outlined + glow neón). Sustituyen a los emojis en la
@@ -2587,6 +2759,7 @@ const GAME_ICONS = {
   tower:  _svg('<rect x="9" y="3" width="6" height="18"/><rect x="4" y="9" width="5" height="12"/><rect x="15" y="12" width="5" height="9"/><path d="M2 21h20"/>'),
   pipes:  _svg('<path d="M6 3v6a3 3 0 0 0 3 3h6a3 3 0 0 1 3 3v6"/><circle cx="6" cy="3" r="1.6" fill="currentColor" stroke="none"/>'),
   blackjack: _svg('<rect x="4" y="6" width="12" height="15" rx="2"/><path d="M8 10l4 7 4-7z" fill="currentColor" stroke="none"/><path d="M16 6l3 1 1.5 12-3 1"/>'),
+  jenga:  _svg('<rect x="4" y="15" width="16" height="5"/><rect x="6" y="10" width="12" height="5"/><rect x="4" y="5" width="7" height="5"/><rect x="14" y="5" width="6" height="5"/>'),
 };
 function gameIcon(g) { return GAME_ICONS[g.id] || g.icon; }
 
@@ -2601,8 +2774,9 @@ const GAMES = [
   { id: 'jumpy', icon: '🦘', name: 'Jumpy Neón', desc: 'Rebota de plataforma en plataforma y sube lo más alto que puedas. ¡No caigas!', run: gameJumpy },
   { id: 'trafix', icon: '🚦', name: 'Cruce Loco', desc: 'Toca los coches para frenarlos o arrancarlos y evita choques en el cruce.', run: gameTrafix },
   { id: 'bowl', icon: '🥣', name: 'Bol Glotón', desc: 'Atrapa la comida que cae con tu bol y esquiva los objetos tóxicos. 3 vidas.', run: gameBowl },
-  { id: 'beer', icon: '🍺', name: 'Caña Perfecta', desc: 'Tira la cerveza en la marca con dos dedos de espuma. 8 clientes te esperan.', run: gameBeer },
+  { id: 'beer', icon: '🍺', name: 'Caña Perfecta', desc: 'Un solo tiro por cliente: mantén para tirar y suelta en la marca con dos dedos de espuma. 8 clientes.', run: gameBeer },
   { id: 'tower', icon: '🏙️', name: 'Torre Infinita', desc: 'Apila bloques y haz crecer el rascacielos. Suéltalos alineados o se derrumba.', run: gameTower },
   { id: 'pipes', icon: '🚰', name: 'Tubería', desc: 'Gira las tuberías para guiar la bola que cae. Si llega a un callejón sin salida, fuga.', run: gamePipes },
   { id: 'blackjack', icon: '🃏', name: 'Blackjack Gore', desc: 'Acércate a 21 más que el crupier. Quien pierde la mano pierde una extremidad.', run: gameBlackjack },
+  { id: 'jenga', icon: '🧱', name: 'Jenga Neón', desc: 'Saca bloques sin que caiga la torre. Alterna lados y mantén el equilibrio.', run: gameJenga },
 ];
