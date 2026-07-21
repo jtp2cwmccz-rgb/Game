@@ -126,9 +126,12 @@ function checkBadges() {
    Cada victoria mueve tu ficha; casillas especiales al estilo
    "de oca a oca": portales que saltan y agujeros que retroceden.
    ============================================================ */
-const BOARD_SIZE = 40;
-const BOARD_TURBO = [6, 12, 18, 24, 30, 36];  // 🌀 salta al siguiente portal
-const BOARD_HOLES = [9, 21, 33];              // 🕳️ retrocede 3
+const BOARD_SIZE = 40;                         // vuelta completa = ganar temporada
+// casillas con efecto RELATIVO a los rivales (estilo Monopoly)
+const BOARD_ADVANCE = [7, 18, 29, 34];         // ⏫ adelanta al rival de delante
+const BOARD_RETREAT = [12, 25, 37];            // ⏬ te cae detrás el de atrás
+const BOARD_SWAP = [4, 22];                    // 🔄 intercambia con el líder
+const BOARD_CORNERS = [0, 10, 20, 30];         // esquinas del anillo
 
 function squaresForScore(score) {
   return Math.max(1, Math.min(6, Math.round(score / 500)));
@@ -205,20 +208,30 @@ function boardAdvance(key, name, avatar, n, reason, silent = false) {
         title: key === '@me' ? '¡META! 🏆' : `¡GANA ${name.toUpperCase()}!`,
         mood: key === '@me' ? 'win' : 'lose',
         score: null,
-        detail: `${name} llegó a la casilla ${BOARD_SIZE}. Empieza la temporada ${state.board.season}: todas las fichas vuelven a la salida.`,
+        detail: `${name} completó la vuelta al tablero. Empieza la temporada ${state.board.season}: todas las fichas vuelven a la SALIDA.`,
         actions: [['VER TABLERO', 'btn-primary', () => goto('board')]],
       });
     }
     return;
   }
 
-  if (BOARD_TURBO.includes(pos)) {
-    const next = BOARD_TURBO.find(t => t > pos) || BOARD_SIZE - 1;
-    extra = ` ⚡ ¡rayo turbo! salta a la ${next}`;
-    pos = next;
-  } else if (BOARD_HOLES.includes(pos)) {
-    pos = Math.max(0, pos - 3);
-    extra = ` 💀 trampa, retrocede a la ${pos}`;
+  // ---- efectos relativos a los demás jugadores (estilo Monopoly) ----
+  const others = Object.entries(state.board.positions)
+    .filter(([k]) => k !== key).map(([, v]) => v);
+  if (BOARD_ADVANCE.includes(pos)) {
+    const ahead = others.filter(o => o.pos > pos).sort((a, b) => a.pos - b.pos)[0];
+    if (ahead) { pos = Math.min(BOARD_SIZE - 1, ahead.pos + 1); extra = ` ⏫ ¡adelanta a ${ahead.name}!`; }
+    else { pos = Math.min(BOARD_SIZE - 1, pos + 3); extra = ' ⏫ ¡tirón hacia delante! (+3)'; }
+  } else if (BOARD_RETREAT.includes(pos)) {
+    const behind = others.filter(o => o.pos < pos).sort((a, b) => b.pos - a.pos)[0];
+    if (behind) { pos = Math.max(0, behind.pos - 1); extra = ` ⏬ te adelanta ${behind.name}`; }
+    else { pos = Math.max(0, pos - 3); extra = ' ⏬ resbalón (−3)'; }
+  } else if (BOARD_SWAP.includes(pos)) {
+    const leader = others.slice().sort((a, b) => b.pos - a.pos)[0];
+    if (leader && leader.pos > pos) {
+      const tmp = leader.pos; leader.pos = pos; pos = tmp;
+      extra = ` 🔄 ¡intercambias con ${leader.name}!`;
+    } else { extra = ' 🔄 ya vas en cabeza'; }
   }
 
   p.pos = pos;
@@ -228,80 +241,76 @@ function boardAdvance(key, name, avatar, n, reason, silent = false) {
   if (!silent) toast(`🎲 +${n} casillas${extra ? ' ·' + extra : ''} → casilla ${pos}`);
 }
 
-/* iconos Material-style en SVG (fiables sin fuente de iconos) */
-const SVG_TROPHY = '<svg viewBox="0 0 24 24"><path d="M6 2h12v2h4v3a5 5 0 0 1-4.7 5A6 6 0 0 1 13 15.9V18h3v3H8v-3h3v-2.1A6 6 0 0 1 6.7 12 5 5 0 0 1 2 7V4h4zm-2 4v1a3 3 0 0 0 2 2.8V6zm16 0h-2v3.8A3 3 0 0 0 20 7z"/></svg>';
-const SVG_BOLT = '<svg viewBox="0 0 24 24"><path d="M13 2 4.5 13.5H10L9 22l8.5-11.5H12z"/></svg>';
-const SVG_STAR = '<svg viewBox="0 0 24 24"><path d="m12 2 2.9 6.3 6.9.6-5.2 4.6 1.5 6.8L12 16.7l-6.1 3.6 1.5-6.8L2.2 8.9l6.9-.6z"/></svg>';
-const BOARD_STAR = 20; // hito visual a mitad de camino
-
-const QUEST_OFFSETS = [0, 48, -56, 0, 64, -48, 24, -64, 40, -24];
-
-function questTile(type, inner) {
-  const t = el('div', `hex ${type}`);
-  t.append(Object.assign(el('div', 'hex-in'), { innerHTML: inner }));
-  return t;
+/* posición 0..39 → celda (fila, columna) del anillo 11×11.
+   Empieza en la esquina inferior izquierda (SALIDA) y sube por la
+   izquierda, cruza arriba, baja por la derecha y vuelve por abajo. */
+function monoCell(pos) {
+  if (pos <= 10) return { row: 11 - pos, col: 1 };
+  if (pos <= 20) return { row: 1, col: 1 + (pos - 10) };
+  if (pos <= 30) return { row: 1 + (pos - 20), col: 11 };
+  return { row: 11, col: 11 - (pos - 30) };
 }
 
 function renderBoard() {
   initBoard();
-  $('#board-sub').textContent = `Temporada ${state.board.season} · Meta: casilla ${BOARD_SIZE}`;
+  $('#board-sub').textContent = `Temporada ${state.board.season} · Da la vuelta al tablero para ganar`;
 
-  const col = $('#board-grid');
-  col.innerHTML = '';
+  const grid = $('#board-grid');
+  grid.innerHTML = '';
   const byPos = {};
   Object.entries(state.board.positions).forEach(([key, p]) => {
-    (byPos[p.pos] = byPos[p.pos] || []).push({ ...p, me: key === '@me' });
+    const tile = ((p.pos % BOARD_SIZE) + BOARD_SIZE) % BOARD_SIZE;
+    (byPos[tile] = byPos[tile] || []).push({ ...p, me: key === '@me' });
   });
-  const myPos = state.board.positions['@me'].pos;
+  const myTile = state.board.positions['@me'].pos % BOARD_SIZE;
 
-  // de la meta (arriba) a la salida (abajo); la casilla 0 es START
-  for (let s = BOARD_SIZE; s >= 0; s--) {
-    const slot = el('div', 'tile-slot');
-    slot.style.transform = `translateX(${QUEST_OFFSETS[s % QUEST_OFFSETS.length]}px)`;
+  // 40 casillas del perímetro
+  for (let pos = 0; pos < BOARD_SIZE; pos++) {
+    const { row, col } = monoCell(pos);
+    const cell = el('div', 'mono-cell');
+    cell.style.gridRow = String(row);
+    cell.style.gridColumn = String(col);
+    let icon = '';
+    if (pos === 0) { cell.classList.add('mono-corner', 'mono-start'); icon = '🏁'; }
+    else if (BOARD_CORNERS.includes(pos)) { cell.classList.add('mono-corner'); icon = '✦'; }
+    else if (BOARD_ADVANCE.includes(pos)) { cell.classList.add('mono-adv'); icon = '⏫'; }
+    else if (BOARD_RETREAT.includes(pos)) { cell.classList.add('mono-ret'); icon = '⏬'; }
+    else if (BOARD_SWAP.includes(pos)) { cell.classList.add('mono-swap'); icon = '🔄'; }
+    cell.innerHTML = `<span class="mc-num">${pos === 0 ? '' : pos}</span><span class="mc-icon">${icon}</span>`;
 
-    let tile;
-    if (s === myPos) {
-      tile = questTile('hx-me', state.profile.avatar);
-      slot.append(Object.assign(el('div', 'here-pill'), { textContent: 'ESTÁS AQUÍ' }));
-    } else if (s === BOARD_SIZE) {
-      tile = questTile('hx-goal', SVG_TROPHY);
-    } else if (s === 0) {
-      tile = questTile('hx-start', '<span class="hex-num">START</span>');
-    } else if (BOARD_TURBO.includes(s)) {
-      tile = questTile('hx-boost', SVG_BOLT);
-    } else if (BOARD_HOLES.includes(s)) {
-      tile = questTile('hx-trap', '💀');
-    } else if (s === BOARD_STAR) {
-      tile = questTile('hx-star', SVG_STAR);
-    } else {
-      tile = questTile('hx-normal', `<span class="hex-num">${String(s).padStart(2, '0')}</span>`);
+    const players = byPos[pos] || [];
+    if (players.length) {
+      if (players.some(p => p.me)) cell.classList.add('has-me');
+      const t = el('div', 'mono-tokens');
+      players.slice(0, 4).forEach(p => {
+        const s = el('span', 'mono-token' + (p.me ? ' mine' : ''));
+        s.textContent = p.avatar;
+        t.append(s);
+      });
+      cell.append(t);
     }
-    slot.append(tile);
-
-    // rivales junto a la casilla (tú vas dentro del hexágono)
-    const rivals = (byPos[s] || []).filter(p => !p.me);
-    rivals.slice(0, 2).forEach((p, i) => {
-      const tok = el('div', `side-token ${i % 2 ? 'left' : 'right'}`, `${p.avatar}<span class="st-name">${escapeHtml(p.name)}</span>`);
-      slot.append(tok);
-    });
-    if (rivals.length > 2) {
-      slot.append(el('div', 'side-token left', `+${rivals.length - 2}`));
-    }
-
-    col.append(slot);
+    grid.append(cell);
   }
 
-  // centrar la vista en tu casilla
-  const meTile = col.querySelector('.hx-me');
-  if (meTile && $('#view-board').classList.contains('active')) {
-    setTimeout(() => meTile.scrollIntoView({ block: 'center' }), 60);
-  }
+  // panel central: clasificación de la carrera
+  const ranking = Object.entries(state.board.positions)
+    .map(([k, v]) => ({ ...v, me: k === '@me' }))
+    .sort((a, b) => b.pos - a.pos);
+  const myRank = ranking.findIndex(r => r.me) + 1;
+  const leader = ranking[0];
+  const center = el('div', 'mono-center glass');
+  center.innerHTML = `
+    <p class="label-caps text-cyan">TEMPORADA ${state.board.season}</p>
+    <p class="mono-rank"><b>${myRank}º</b><span> de ${ranking.length}</span></p>
+    <p class="hint">Tú: casilla ${myTile} / ${BOARD_SIZE}</p>
+    <div class="mono-leader">👑 ${leader.avatar} ${escapeHtml(leader.name)}<br><span>casilla ${leader.pos % BOARD_SIZE}</span></div>`;
+  grid.append(center);
 
   // banner de movimiento
   const res = state.results[todayKey()];
   if (res) {
     $('#qb-title').textContent = `+${res.score} PTS GANADOS`;
-    $('#qb-sub').textContent = `Casilla ${myPos} de ${BOARD_SIZE} · ${todaysGameName()}`;
+    $('#qb-sub').textContent = `Casilla ${myTile} de ${BOARD_SIZE} · ${todaysGameName()}`;
     $('#qb-btn').textContent = 'MEJORAR';
   } else {
     $('#qb-title').textContent = 'RETO PENDIENTE';
