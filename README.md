@@ -25,6 +25,9 @@ Diseño basado en el design system **"Daily Duel Neon"** del proyecto de Stitch 
 | 🚦 Cruce Loco | Estilo *Trafix*: dirige el tráfico de un cruce de dos calzadas tocando los coches para frenarlos (punto rojo) y arrancarlos. +40 por coche que completa el recorrido; un choque en el cruce y se acabó. El tráfico se acelera (¡MÁS TRÁFICO!, ¡HORA PUNTA!). |
 | 🥣 Bol Glotón | Arrastra el bol para atrapar la comida que cae (🍣🍜🍎…) y esquiva los objetos tóxicos (☠️🧪🧨). +50 por manjar, 3 vidas; la lluvia se acelera y cada vez cae más porquería. |
 | 🍺 Caña Perfecta | El arte de tirar la cerveza: mantén TIRAR para abrir el grifo (la presión sube sola y a más presión, más espuma), suelta para que repose y SERVIR con el nivel en la marca y dos dedos de espuma. 8 clientes con pedidos distintos (caña, tubo, jarra); rebosar arruina la ronda y cada cliente el grifo viene más bravo. |
+| 🏙️ Torre Infinita | Estilo *Stack*: un bloque se desliza; toca para soltarlo sobre la torre. Lo que sobresale se corta y el bloque se estrecha; los aciertos perfectos dan combo y recuperan anchura. Puntúa la altura del rascacielos; si fallas del todo, se derrumba. |
+| 🚰 Tubería | Una bola cae por una red de tuberías; toca una tubería para girarla 90° y encajar entrada con salida para que la bola siga fluyendo. +20 por tramo; si llega a un callejón sin salida o se sale del tablero, fuga. Acelera con el tiempo. |
+| 🃏 Blackjack Gore | 21 sangriento: acércate a 21 más que el crupier sin pasarte (PEDIR / PLANTARSE). Quien pierde la mano pierde una extremidad con salpicadura de sangre; descuartiza al crupier (5 miembros) para ganar, o cae si te descabezan a ti. |
 
 El catálogo está pensado para crecer: añade más juegos al array `GAMES` de `js/games.js` y entran solos en la rotación diaria. Todos los minijuegos usan un **RNG determinista sembrado con la fecha**, así que el reto (distancias y anchos de plataforma) es idéntico para todos los jugadores del día.
 

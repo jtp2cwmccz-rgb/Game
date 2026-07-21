@@ -2009,6 +2009,565 @@ function gameBeer(stage, rng, api) {
   };
 }
 
+
+/* ============================================================
+   TORRE INFINITA (apila y crece un rascacielos)
+   Un bloque se desliza; toca para soltarlo sobre la torre. Lo que
+   sobresale se corta y el bloque se estrecha. Aciertos perfectos
+   dan combo y recuperan anchura. Si fallas del todo, se derrumba.
+   ============================================================ */
+function gameTower(stage, rng, api) {
+  const wrap = el('div', 'flip-wrap');
+  const canvas = el('canvas', 'flip-canvas');
+  const hint = el('p', 'stage-timer', 'TOCA PARA SOLTAR EL BLOQUE');
+  wrap.append(canvas, hint);
+  stage.append(wrap);
+
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
+  (function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width; H = Math.max(340, r.height - 40);
+    canvas.width = W * DPR; canvas.height = H * DPR;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  })();
+
+  const BH = 26;                       // alto de cada planta
+  const BASE_W = Math.min(W * 0.5, 190);
+  let blocks = [];                     // { x, w } de abajo arriba
+  let camY = 0;                        // desplazamiento de cámara (torre sube)
+  let cur = null;                      // bloque en movimiento { x, w, dir, speed }
+  let falling = [];                    // trozos recortados que caen
+  let score = 0, floors = 0, streak = 0;
+  let over = false, popup = null;
+  let raf = null, last = performance.now();
+
+  blocks.push({ x: (W - BASE_W) / 2, w: BASE_W });
+
+  function spawnBlock() {
+    const w = blocks[blocks.length - 1].w;
+    const speed = 150 + floors * 6 + rng() * 40;
+    cur = { x: 0, w, dir: 1, speed };
+  }
+  spawnBlock();
+
+  function baseY() { return H - 40; }
+  function blockY(i) { return baseY() - i * BH + camY; }
+
+  function drop() {
+    if (over || !cur || api.done) return;
+    const below = blocks[blocks.length - 1];
+    const overlapL = Math.max(cur.x, below.x);
+    const overlapR = Math.min(cur.x + cur.w, below.x + below.w);
+    const overlap = overlapR - overlapL;
+    if (overlap <= 0) {
+      falling.push({ x: cur.x, y: blockY(blocks.length), w: cur.w, vy: 0, vx: cur.dir * 40 });
+      cur = null;
+      over = true;
+      setTimeout(() => api.finish(score, `${floors} plantas de rascacielos`), 800);
+      return;
+    }
+    const diff = cur.x - below.x;
+    // trozo sobrante que se cae
+    if (Math.abs(diff) > 1.5) {
+      const cutX = diff > 0 ? overlapR : cur.x;
+      falling.push({ x: cutX, y: blockY(blocks.length), w: cur.w - overlap, vy: 0, vx: (diff > 0 ? 1 : -1) * 30 });
+    }
+    const perfect = Math.abs(diff) < 6;
+    let w = overlap, x = overlapL;
+    if (perfect) {
+      streak++;
+      w = Math.min(below.w, overlap + 8);          // recompensa: recupera anchura
+      x = below.x + (below.w - w) / 2;
+      score += 50 + streak * 15;
+      popup = { text: `¡PERFECTO! ×${streak}`, t: 1, color: '#00f4fe' };
+    } else {
+      streak = 0;
+      score += 25;
+      popup = { text: '+25', t: 0.9, color: '#ebb2ff' };
+    }
+    blocks.push({ x, w });
+    floors++;
+    api.setScore(score);
+    // subir cámara para mantener la cima visible
+    const topY = blockY(blocks.length);
+    if (topY < H * 0.4) camY += H * 0.4 - topY;
+    spawnBlock();
+  }
+  canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); drop(); });
+  const onKey = (e) => { if (!e.repeat && (e.key === ' ' || e.key === 'ArrowDown')) drop(); };
+  window.addEventListener('keydown', onKey);
+
+  function step(dt) {
+    if (cur && !over) {
+      cur.x += cur.dir * cur.speed * dt;
+      if (cur.x <= 0) { cur.x = 0; cur.dir = 1; }
+      if (cur.x + cur.w >= W) { cur.x = W - cur.w; cur.dir = -1; }
+    }
+    for (const f of falling) { f.vy += 1400 * dt; f.y += f.vy * dt; f.x += f.vx * dt; }
+    falling = falling.filter(f => f.y < H + 60);
+    if (popup) { popup.t -= dt; if (popup.t <= 0) popup = null; }
+  }
+
+  function drawBlock(x, y, w, hue) {
+    ctx.fillStyle = hue;
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(x, y - BH, w, BH - 2, 4); ctx.fill(); ctx.stroke();
+    // ventanas
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    for (let wx = x + 6; wx < x + w - 6; wx += 12) ctx.fillRect(wx, y - BH + 6, 5, BH - 13);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    // cielo degradado
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#160e2e'); g.addColorStop(1, '#0b1326');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+    blocks.forEach((b, i) => {
+      const y = blockY(i + 1);
+      if (y < -BH || y > H + BH) return;
+      const t = i / Math.max(1, blocks.length);
+      const hue = `hsl(${(200 + i * 12) % 360} 90% ${34 + (i % 2) * 8}%)`;
+      drawBlock(b.x, y, b.w, hue);
+    });
+    for (const f of falling) drawBlock(f.x, f.y, f.w, 'rgba(235,178,255,0.5)');
+
+    if (cur && !over) drawBlock(cur.x, blockY(blocks.length), cur.w, 'hsl(185 90% 45%)');
+
+    ctx.font = '700 13px Space Grotesk, monospace';
+    ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(218,226,253,0.6)';
+    ctx.fillText(`PLANTA ${floors}`, 12, 22);
+
+    if (popup) {
+      ctx.font = '800 20px Lexend, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = popup.color; ctx.globalAlpha = Math.min(1, popup.t * 2);
+      ctx.shadowColor = popup.color; ctx.shadowBlur = 16;
+      ctx.fillText(popup.text, W / 2, H * 0.18); ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+    }
+    if (over) {
+      ctx.font = '800 30px Lexend, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = '#ff5470'; ctx.shadowColor = '#ff5470'; ctx.shadowBlur = 20;
+      ctx.fillText('¡SE DERRUMBA!', W / 2, H * 0.5); ctx.shadowBlur = 0;
+    }
+  }
+
+  function loop(now) {
+    if (api.done) return;
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    step(dt); draw(); raf = requestAnimationFrame(loop);
+  }
+  raf = requestAnimationFrame(loop);
+  api.onQuit = () => { cancelAnimationFrame(raf); window.removeEventListener('keydown', onKey); };
+}
+
+/* ============================================================
+   TUBERÍA (guía la bola que cae girando el conducto)
+   La bola cae por un conducto de tuberías. Toca izquierda/derecha
+   para doblar la tubería y llevarla de carril: recoge válvulas 💠
+   y esquiva las fugas 🔥. Se acelera con el tiempo.
+   ============================================================ */
+function gamePipes(stage, rng, api) {
+  const wrap = el('div', 'flip-wrap');
+  const canvas = el('canvas', 'flip-canvas');
+  const hint = el('p', 'stage-timer', 'TOCA IZQUIERDA / DERECHA PARA DOBLAR LA TUBERÍA');
+  wrap.append(canvas, hint);
+  stage.append(wrap);
+
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
+  (function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width; H = Math.max(360, r.height - 40);
+    canvas.width = W * DPR; canvas.height = H * DPR;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  })();
+
+  const LANES = 4;
+  const CONDUIT_W = Math.min(W * 0.8, 320);
+  const CX0 = (W - CONDUIT_W) / 2;
+  const LANE_W = CONDUIT_W / LANES;
+  const laneX = (l) => CX0 + LANE_W * (l + 0.5);
+  const BALL_Y = H * 0.34;
+  const CYAN = '#00f4fe', PINK = '#ff007a';
+
+  let lane = Math.floor(LANES / 2);
+  let ballX = laneX(lane);
+  let bend = 0;                 // animación de doblado (-1..1)
+  let items = [];               // { lane, y, type: 'leak'|'valve' }
+  let jointScroll = 0;
+  let prevSafe = lane;
+  let t = 0, untilSpawn = 0.5;
+  let score = 0, valves = 0, over = false;
+  let crashY = null, notice = null, level = 0;
+  let raf = null, last = performance.now();
+
+  const LEVELS = [[16, '¡MÁS PRESIÓN!'], [34, '¡A TODO CAUDAL!']];
+
+  function difficulty() { return Math.min(1, t / 40); }
+
+  function spawnRow() {
+    // deja siempre ≥1 carril seguro y alcanzable desde el hueco anterior
+    const shift = Math.floor(rng() * 3) - 1;
+    const safe = Math.max(0, Math.min(LANES - 1, prevSafe + shift));
+    prevSafe = safe;
+    for (let l = 0; l < LANES; l++) {
+      if (l === safe) { if (rng() < 0.5) items.push({ lane: l, y: -30, type: 'valve' }); continue; }
+      if (rng() < 0.66) items.push({ lane: l, y: -30, type: 'leak' });
+      else if (rng() < 0.3) items.push({ lane: l, y: -30, type: 'valve' });
+    }
+  }
+
+  function move(dir) {
+    if (over) return;
+    const nl = Math.max(0, Math.min(LANES - 1, lane + dir));
+    if (nl !== lane) { lane = nl; bend = dir; }
+  }
+  function setFromX(cx) {
+    const r = canvas.getBoundingClientRect();
+    move(cx - r.left < r.width / 2 ? -1 : 1);
+  }
+  canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); if (!over) setFromX(e.clientX); });
+  const onKey = (e) => {
+    if (e.repeat || over) return;
+    if (e.key === 'ArrowLeft' || e.key === 'a') move(-1);
+    if (e.key === 'ArrowRight' || e.key === 'd') move(1);
+  };
+  window.addEventListener('keydown', onKey);
+
+  function crash(y) {
+    if (over) return;
+    over = true; crashY = y;
+    setTimeout(() => api.finish(score, `${valves} válvulas recogidas`), 750);
+  }
+
+  function step(dt) {
+    if (over) return;
+    t += dt;
+    if (level < LEVELS.length && t >= LEVELS[level][0]) { notice = { text: LEVELS[level][1], t: 1.6 }; level++; }
+    if (notice) { notice.t -= dt; if (notice.t <= 0) notice = null; }
+
+    const speed = Math.min(520, 230 + t * 8);
+    jointScroll = (jointScroll + speed * dt) % 46;
+    ballX += (laneX(lane) - ballX) * Math.min(1, dt * 14);
+    bend *= Math.max(0, 1 - dt * 6);
+
+    // marcador por caudal
+    score += Math.round(dt * 14);
+
+    untilSpawn -= dt;
+    if (untilSpawn <= 0) {
+      spawnRow();
+      untilSpawn = Math.max(0.5, 1.05 - t * 0.012) + rng() * 0.15;
+    }
+
+    for (const it of items) {
+      it.y += speed * dt;
+      if (!it.done && Math.abs(it.y - BALL_Y) < 22 && it.lane === lane) {
+        if (it.type === 'valve') { it.done = true; valves++; score += 60; api.setScore(score); }
+        else { crash(it.y); }
+      }
+    }
+    items = items.filter(it => !it.done && it.y < H + 40);
+    api.setScore(score);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#0b1326'; ctx.fillRect(0, 0, W, H);
+
+    // paredes del conducto
+    ctx.fillStyle = '#060e20';
+    ctx.fillRect(CX0, 0, CONDUIT_W, H);
+    ctx.strokeStyle = 'rgba(0,244,254,0.45)'; ctx.lineWidth = 3;
+    ctx.shadowColor = CYAN; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.moveTo(CX0, 0); ctx.lineTo(CX0, H);
+    ctx.moveTo(CX0 + CONDUIT_W, 0); ctx.lineTo(CX0 + CONDUIT_W, H); ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // juntas de tubería (anillos que bajan) por carril
+    ctx.strokeStyle = 'rgba(235,178,255,0.18)'; ctx.lineWidth = 2;
+    for (let l = 0; l < LANES; l++) {
+      const x = laneX(l);
+      for (let y = -46 + jointScroll; y < H; y += 46) {
+        ctx.beginPath(); ctx.moveTo(x - LANE_W * 0.34, y); ctx.lineTo(x + LANE_W * 0.34, y); ctx.stroke();
+      }
+    }
+
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const it of items) {
+      if (it.type === 'valve') {
+        ctx.font = '22px serif'; ctx.shadowColor = CYAN; ctx.shadowBlur = 10;
+        ctx.fillText('💠', laneX(it.lane), it.y); ctx.shadowBlur = 0;
+      } else {
+        ctx.font = '24px serif'; ctx.shadowColor = PINK; ctx.shadowBlur = 12;
+        ctx.fillText('🔥', laneX(it.lane), it.y); ctx.shadowBlur = 0;
+      }
+    }
+
+    // bola con "tubo doblado" hacia su carril
+    ctx.strokeStyle = CYAN; ctx.lineWidth = 9; ctx.lineCap = 'round';
+    ctx.shadowColor = CYAN; ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.moveTo(ballX - bend * 26, BALL_Y - 30);
+    ctx.quadraticCurveTo(ballX, BALL_Y - 6, ballX, BALL_Y + 26);
+    ctx.stroke(); ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffd76a'; ctx.shadowColor = '#ffd76a'; ctx.shadowBlur = 16;
+    ctx.beginPath(); ctx.arc(ballX, BALL_Y, 11, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+
+    ctx.font = '700 13px Space Grotesk, monospace'; ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(218,226,253,0.6)'; ctx.fillText(`💠 ${valves}`, 12, 20);
+
+    if (notice) {
+      ctx.font = '800 24px Lexend, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = '#ebb2ff'; ctx.globalAlpha = Math.min(1, notice.t * 2);
+      ctx.shadowColor = '#bc13fe'; ctx.shadowBlur = 20;
+      ctx.fillText(notice.text, W / 2, H * 0.16); ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+    }
+    if (crashY !== null) {
+      ctx.font = '800 30px Lexend, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = '#ff5470'; ctx.shadowColor = '#ff5470'; ctx.shadowBlur = 20;
+      ctx.fillText('¡FUGA!', W / 2, H * 0.5); ctx.shadowBlur = 0;
+    }
+  }
+
+  function loop(now) {
+    if (api.done) return;
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    step(dt); draw(); raf = requestAnimationFrame(loop);
+  }
+  raf = requestAnimationFrame(loop);
+  api.onQuit = () => { cancelAnimationFrame(raf); window.removeEventListener('keydown', onKey); };
+}
+
+/* ============================================================
+   BLACKJACK GORE (21 sangriento)
+   Acércate a 21 más que el crupier sin pasarte. Quien pierde la
+   mano pierde una extremidad. Si el crupier se queda sin miembros,
+   ganas la partida; si te descabezan a ti, se acabó.
+   ============================================================ */
+function gameBlackjack(stage, rng, api) {
+  const wrap = el('div', 'flip-wrap');
+  const canvas = el('canvas', 'flip-canvas');
+  const powerWrap = el('div', 'flip-power'); powerWrap.style.visibility = 'hidden';
+  const controls = el('div', 'stairs-controls');
+  const btnHit = el('button', 'btn-3d btn-pink', '🩸 PEDIR');
+  const btnStand = el('button', 'btn-3d btn-cyan', '✋ PLANTARSE');
+  controls.append(btnHit, btnStand);
+  wrap.append(canvas, controls);
+  stage.append(wrap);
+
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
+  (function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width; H = Math.max(320, r.height - 88);
+    canvas.width = W * DPR; canvas.height = H * DPR;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  })();
+
+  const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+  const SUITS = ['♠', '♥', '♦', '♣'];
+  const LIMBS = ['left-arm', 'right-arm', 'left-leg', 'right-leg', 'head'];  // head al final = muerte
+  const LIMB_ES = 'brazo pierna pierna cabeza'.split(' ');
+
+  let deck = [];
+  function reshuffle() {
+    deck = [];
+    for (const r of RANKS) for (const s of SUITS) deck.push({ r, s });
+    deck = shuffled(deck, rng);
+  }
+  reshuffle();
+  function draw1() { if (!deck.length) reshuffle(); return deck.pop(); }
+  function cardVal(c) { return c.r === 'A' ? 11 : ['J', 'Q', 'K'].includes(c.r) ? 10 : parseInt(c.r); }
+  function handVal(cards) {
+    let sum = cards.reduce((s, c) => s + cardVal(c), 0);
+    let aces = cards.filter(c => c.r === 'A').length;
+    while (sum > 21 && aces > 0) { sum -= 10; aces--; }
+    return sum;
+  }
+
+  let player = [], dealer = [];
+  let phase = 'player';           // player | dealer | result | over
+  let hideDealer = true;
+  let msg = 'Acércate a 21. ¡Quien pierde, pierde un miembro!';
+  let pLimbs = 5, dLimbs = 5;     // 5 = intacto (incluye cabeza)
+  let blood = [];                 // partículas de sangre
+  let score = 0, handsWon = 0, over = false;
+  let raf = null, last = performance.now();
+
+  function splat(x, y) {
+    for (let i = 0; i < 14; i++) {
+      const a = rng() * Math.PI * 2, sp = 40 + rng() * 160;
+      blood.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: 0.9, r: 2 + rng() * 4 });
+    }
+  }
+
+  function deal() {
+    if (over) return;
+    player = [draw1(), draw1()];
+    dealer = [draw1(), draw1()];
+    hideDealer = true;
+    phase = 'player';
+    msg = 'PIDE otra carta o PLÁNTATE';
+    if (handVal(player) === 21) { stand(); }   // blackjack directo
+  }
+
+  function loseLimb(who) {
+    if (who === 'p') { pLimbs--; splat(W * 0.28, H * 0.42); }
+    else { dLimbs--; splat(W * 0.72, H * 0.42); }
+  }
+
+  function endHand(result) {
+    // result: 'win' | 'lose' | 'push'
+    hideDealer = false;
+    phase = 'result';
+    if (result === 'win') {
+      handsWon++; score += 150; loseLimb('d');
+      msg = `¡GANAS! El crupier pierde un ${LIMB_ES[4 - dLimbs] || 'miembro'} 🩸`;
+      if (dLimbs <= 0) { win(); return; }
+    } else if (result === 'lose') {
+      score += 20; loseLimb('p');
+      msg = `Pierdes la mano… y un ${LIMB_ES[4 - pLimbs] || 'miembro'} 🩸`;
+      if (pLimbs <= 0) { lose(); return; }
+    } else {
+      score += 40; msg = 'Empate. Nadie sangra.';
+    }
+    setTimeout(() => { if (!over) deal(); }, 1600);
+  }
+
+  function stand() {
+    if (phase !== 'player' || over) return;
+    phase = 'dealer';
+    hideDealer = false;
+    // el crupier pide hasta 17
+    const tick = () => {
+      if (over) return;
+      if (handVal(dealer) < 17) { dealer.push(draw1()); setTimeout(tick, 500); return; }
+      const pv = handVal(player), dv = handVal(dealer);
+      if (dv > 21 || pv > dv) endHand('win');
+      else if (pv === dv) endHand('push');
+      else endHand('lose');
+    };
+    setTimeout(tick, 500);
+  }
+
+  function hit() {
+    if (phase !== 'player' || over) return;
+    player.push(draw1());
+    if (handVal(player) > 21) { endHand('lose'); }
+  }
+
+  function win() { over = true; phase = 'over'; msg = '¡DESCUARTIZASTE AL CRUPIER! 🏆'; setTimeout(() => api.finish(score + 400, `Crupier destrozado · ${handsWon} manos`), 1200); }
+  function lose() { over = true; phase = 'over'; msg = 'TE DESCABEZARON ☠️'; setTimeout(() => api.finish(score, `${handsWon} manos ganadas`), 1200); }
+
+  btnHit.addEventListener('pointerdown', (e) => { e.preventDefault(); hit(); });
+  btnStand.addEventListener('pointerdown', (e) => { e.preventDefault(); stand(); });
+
+  function drawFigure(cx, cy, limbs, color, isDealer) {
+    ctx.strokeStyle = color; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    // cabeza (limbs>=1 para estar viva; head se pierde en el último golpe)
+    const headOn = limbs >= 1;
+    if (headOn) {
+      ctx.beginPath(); ctx.arc(cx, cy - 34, 11, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = color; ctx.font = '13px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(isDealer ? '💀' : '😬', cx, cy - 34);
+    }
+    // torso
+    ctx.beginPath(); ctx.moveTo(cx, cy - 22); ctx.lineTo(cx, cy + 8); ctx.stroke();
+    // brazos: left-arm perdido si limbs<5 ; right-arm si limbs<4
+    if (limbs >= 5) { ctx.beginPath(); ctx.moveTo(cx, cy - 16); ctx.lineTo(cx - 16, cy - 6); ctx.stroke(); }
+    if (limbs >= 4) { ctx.beginPath(); ctx.moveTo(cx, cy - 16); ctx.lineTo(cx + 16, cy - 6); ctx.stroke(); }
+    // piernas: left-leg si limbs>=3 ; right-leg si limbs>=2
+    if (limbs >= 3) { ctx.beginPath(); ctx.moveTo(cx, cy + 8); ctx.lineTo(cx - 12, cy + 28); ctx.stroke(); }
+    if (limbs >= 2) { ctx.beginPath(); ctx.moveTo(cx, cy + 8); ctx.lineTo(cx + 12, cy + 28); ctx.stroke(); }
+  }
+
+  function drawCard(x, y, c, hidden) {
+    ctx.fillStyle = hidden ? '#3a1220' : '#f4f1ea';
+    ctx.strokeStyle = '#ff2b5e'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(x, y, 30, 42, 4); ctx.fill(); ctx.stroke();
+    if (!hidden) {
+      const red = c.s === '♥' || c.s === '♦';
+      ctx.fillStyle = red ? '#c4173c' : '#1c2430';
+      ctx.font = '700 13px Lexend, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(c.r, x + 15, y + 15);
+      ctx.font = '13px serif'; ctx.fillText(c.s, x + 15, y + 30);
+    } else {
+      ctx.fillStyle = '#ff2b5e'; ctx.font = '16px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('🩸', x + 15, y + 21);
+    }
+  }
+
+  function step(dt) {
+    for (const b of blood) { b.vy += 260 * dt; b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt; }
+    blood = blood.filter(b => b.life > 0);
+  }
+
+  function draw() {
+    // fondo tétrico
+    const g = ctx.createRadialGradient(W / 2, H * 0.4, 20, W / 2, H * 0.4, W);
+    g.addColorStop(0, '#2a0a12'); g.addColorStop(1, '#0b0406');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+    // figuras
+    drawFigure(W * 0.28, H * 0.42, pLimbs, '#7cf7ff', false);
+    drawFigure(W * 0.72, H * 0.42, dLimbs, '#ff5470', true);
+    ctx.font = '700 11px Space Grotesk, monospace'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#7cf7ff'; ctx.fillText('TÚ', W * 0.28, H * 0.42 + 46);
+    ctx.fillStyle = '#ff5470'; ctx.fillText('CRUPIER', W * 0.72, H * 0.42 + 46);
+
+    // cartas del crupier (arriba)
+    dealer.forEach((c, i) => drawCard(W / 2 - dealer.length * 17 + i * 34, 12, c, hideDealer && i === 1));
+    // cartas del jugador (abajo)
+    player.forEach((c, i) => drawCard(W / 2 - player.length * 17 + i * 34, H - 58, c, false));
+
+    // valores
+    ctx.font = '800 18px Lexend, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#dae2fd';
+    ctx.fillText(hideDealer ? '?' : String(handVal(dealer)), W / 2, 74);
+    ctx.fillText(String(handVal(player)), W / 2, H - 70);
+
+    // sangre
+    for (const b of blood) {
+      ctx.globalAlpha = Math.max(0, b.life);
+      ctx.fillStyle = '#c4173c';
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // mensaje central
+    ctx.font = '600 14px Lexend, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#ffd9d9';
+    wrapText(msg, W / 2, H * 0.62, W - 40, 18);
+  }
+
+  function wrapText(text, x, y, maxW, lh) {
+    const words = text.split(' '); let line = '', yy = y;
+    for (const w of words) {
+      if (ctx.measureText(line + w).width > maxW && line) { ctx.fillText(line.trim(), x, yy); line = ''; yy += lh; }
+      line += w + ' ';
+    }
+    ctx.fillText(line.trim(), x, yy);
+  }
+
+  function loop(now) {
+    if (api.done) return;
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    step(dt); draw(); raf = requestAnimationFrame(loop);
+  }
+  raf = requestAnimationFrame(loop);
+  deal();
+  api.onQuit = () => cancelAnimationFrame(raf);
+}
+
 /* ============================================================
    Iconos de línea (estilo design system de Stitch: Material
    Symbols outlined + glow neón). Sustituyen a los emojis en la
@@ -2025,6 +2584,9 @@ const GAME_ICONS = {
   trafix: _svg('<rect x="8" y="2" width="8" height="15" rx="4"/><path d="M12 17v4"/><path d="M6 21h12"/><circle cx="12" cy="6.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="9.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="12.5" r="1.1" fill="currentColor" stroke="none"/>'),
   bowl:   _svg('<path d="M3 11h18a9 9 0 0 1-18 0z"/><path d="M8.5 7c0-1.2 1-1.2 1-2.5"/><path d="M13.5 7c0-1.2 1-1.2 1-2.5"/>'),
   beer:   _svg('<path d="M7 8h8v11a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1z"/><path d="M15 11h2a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2h-2"/><path d="M7 8c-1.1 0-2-.9-2-2s.9-2 2-2c.2-1.1 1.2-2 2.4-2 .7 0 1.3.3 1.8.8.5-.5 1.1-.8 1.8-.8 1.2 0 2.2.9 2.4 2 1.1 0 2 .9 2 2s-.9 2-2 2z"/>'),
+  tower:  _svg('<rect x="9" y="3" width="6" height="18"/><rect x="4" y="9" width="5" height="12"/><rect x="15" y="12" width="5" height="9"/><path d="M2 21h20"/>'),
+  pipes:  _svg('<path d="M6 3v6a3 3 0 0 0 3 3h6a3 3 0 0 1 3 3v6"/><circle cx="6" cy="3" r="1.6" fill="currentColor" stroke="none"/>'),
+  blackjack: _svg('<rect x="4" y="6" width="12" height="15" rx="2"/><path d="M8 10l4 7 4-7z" fill="currentColor" stroke="none"/><path d="M16 6l3 1 1.5 12-3 1"/>'),
 };
 function gameIcon(g) { return GAME_ICONS[g.id] || g.icon; }
 
@@ -2040,4 +2602,7 @@ const GAMES = [
   { id: 'trafix', icon: '🚦', name: 'Cruce Loco', desc: 'Toca los coches para frenarlos o arrancarlos y evita choques en el cruce.', run: gameTrafix },
   { id: 'bowl', icon: '🥣', name: 'Bol Glotón', desc: 'Atrapa la comida que cae con tu bol y esquiva los objetos tóxicos. 3 vidas.', run: gameBowl },
   { id: 'beer', icon: '🍺', name: 'Caña Perfecta', desc: 'Tira la cerveza en la marca con dos dedos de espuma. 8 clientes te esperan.', run: gameBeer },
+  { id: 'tower', icon: '🏙️', name: 'Torre Infinita', desc: 'Apila bloques y haz crecer el rascacielos. Suéltalos alineados o se derrumba.', run: gameTower },
+  { id: 'pipes', icon: '🚰', name: 'Tubería', desc: 'Gira las tuberías para guiar la bola que cae. Si llega a un callejón sin salida, fuga.', run: gamePipes },
+  { id: 'blackjack', icon: '🃏', name: 'Blackjack Gore', desc: 'Acércate a 21 más que el crupier. Quien pierde la mano pierde una extremidad.', run: gameBlackjack },
 ];
