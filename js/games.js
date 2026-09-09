@@ -2280,7 +2280,9 @@ function gamePipes(stage, rng, api) {
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = '#0b1326'; ctx.fillRect(0, 0, W, H);
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#151e3a'); bg.addColorStop(0.6, '#0c1428'); bg.addColorStop(1, '#070d1c');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
 
     // paredes del conducto
     ctx.fillStyle = '#060e20';
