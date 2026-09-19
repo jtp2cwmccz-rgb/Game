@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0b1326">
+<title>Daily Buddy Battles</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;600;700;800&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ============ DASHBOARD ============ -->
+  <main id="view-home" class="view active">
+    <header class="hud">
+      <div class="hud-left">
+        <div class="avatar avatar-md glow-primary" id="home-avatar">🦊</div>
+        <div>
+          <p class="label-caps text-cyan">HOLA DE NUEVO</p>
+          <h2 class="hud-name" id="home-name">Jugador</h2>
+        </div>
+      </div>
+      <div class="streak-pod" title="Racha diaria">
+        <span class="streak-flame">🔥</span>
+        <span class="stats-number" id="home-streak">0</span>
+      </div>
+    </header>
+
+    <section class="section">
+      <div class="section-head">
+        <p class="label-caps text-muted">RETO DE HOY</p>
+        <span class="chip chip-live" id="home-live-chip">● LIVE</span>
+      </div>
+
+      <div class="card-hero glass glow-edge" id="home-hero">
+        <div class="hero-bg-glow"></div>
+        <div class="hero-icon" id="home-game-icon">🎯</div>
+        <h1 class="hero-title" id="home-game-name">Cargando…</h1>
+        <p class="hero-desc" id="home-game-desc"></p>
+        <div class="hero-meta">
+          <div class="meta-pod">
+            <p class="label-caps text-muted">TERMINA EN</p>
+            <p class="stats-number text-cyan" id="home-countdown">--:--:--</p>
+          </div>
+          <div class="meta-pod">
+            <p class="label-caps text-muted">TU MARCA</p>
+            <p class="stats-number text-pink" id="home-best">—</p>
+          </div>
+        </div>
+        <button class="btn-3d btn-primary btn-block" id="home-play-btn">
+          <span id="home-play-label">JUGAR AHORA</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <p class="label-caps text-muted">RANKING DE HOY</p>
+        <button class="link-btn" data-goto="rank">Ver todo</button>
+      </div>
+      <div id="home-mini-rank" class="stack"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <p class="label-caps text-muted">TODOS LOS JUEGOS</p>
+      </div>
+      <div class="rail" id="home-upcoming"></div>
+    </section>
+  </main>
+
+  <!-- ============ DUEL LOBBY ============ -->
+  <main id="view-duel" class="view">
+    <header class="page-head">
+      <h1 class="page-title">Sala de Duelo</h1>
+      <p class="page-sub">Reta a un amigo en el minijuego de hoy</p>
+    </header>
+
+    <section class="section">
+      <div class="duel-card glass glow-edge">
+        <div class="duel-side">
+          <div class="avatar avatar-lg glow-primary" id="duel-me-avatar">🦊</div>
+          <p class="duel-name" id="duel-me-name">Tú</p>
+          <p class="stats-number text-cyan" id="duel-me-score">—</p>
+        </div>
+        <div class="vs-badge">VS</div>
+        <div class="duel-side">
+          <div class="avatar avatar-lg glow-pink" id="duel-foe-avatar">👾</div>
+          <p class="duel-name" id="duel-foe-name">Rival</p>
+          <p class="stats-number text-pink" id="duel-foe-score">—</p>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="label-caps text-muted" for="duel-foe-input">NOMBRE DEL RIVAL</label>
+        <input type="text" id="duel-foe-input" class="input" maxlength="14" placeholder="Ej: Marta">
+      </div>
+
+      <button class="btn-3d btn-primary btn-block" id="duel-start-btn">⚔️ EMPEZAR DUELO</button>
+      <p class="hint">Modo pasa-y-juega: primero juegas tú y luego le pasas el móvil a tu rival. Mismo reto, misma semilla.</p>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <p class="label-caps text-muted">COMPARTE TU RESULTADO</p>
+      </div>
+      <div class="card glass">
+        <p class="body-md text-muted" id="share-status">Juega el reto de hoy para generar tu código.</p>
+        <div class="share-row">
+          <code class="share-code" id="share-code">—</code>
+          <button class="btn-3d btn-cyan btn-sm" id="share-copy-btn">COPIAR</button>
+        </div>
+      </div>
+      <div class="field">
+        <label class="label-caps text-muted" for="import-input">PEGA EL CÓDIGO DE UN AMIGO</label>
+        <div class="share-row">
+          <input type="text" id="import-input" class="input" placeholder="DDB1.…">
+          <button class="btn-3d btn-pink btn-sm" id="import-btn">AÑADIR</button>
+        </div>
+        <p class="hint" id="import-msg"></p>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <p class="label-caps text-muted">HISTORIAL DE DUELOS</p>
+      </div>
+      <div id="duel-history" class="stack"></div>
+    </section>
+  </main>
+
+  <!-- ============ QUEST BOARD (camino hexagonal estilo oca) ============ -->
+  <main id="view-board" class="view neon-grid">
+    <header class="page-head quest-head">
+      <h1 class="page-title quest-title">EL TABLERO</h1>
+      <p class="page-sub" id="board-sub">Temporada 1 · Da la vuelta al tablero para ganar</p>
+    </header>
+
+    <section class="section">
+      <div class="mono-board" id="board-grid"></div>
+    </section>
+
+    <section class="section">
+      <div class="card glass board-legend">
+        <p class="label-caps text-muted">CÓMO FUNCIONA</p>
+        <p class="hint">Cada partida del reto avanza tu ficha <b>1–6 casillas</b> según la puntuación (500 pts ≈ 1 casilla). Ganar un duelo da <b>+3</b>. Los amigos avanzan al pegar sus códigos.</p>
+        <p class="hint">⏫ <b>Adelanta</b>: saltas por delante del rival de delante · ⏬ <b>Retrocede</b>: te cae detrás el de atrás · 🔄 <b>Intercambio</b>: cambias de sitio con el líder · 🏁 <b>Vuelta completa</b>: ¡ganas la temporada!</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><p class="label-caps text-muted">ÚLTIMOS MOVIMIENTOS</p></div>
+      <div id="board-log" class="stack"></div>
+    </section>
+
+    <!-- banner de movimiento (fijo sobre la nav) -->
+    <div class="quest-banner" id="board-banner">
+      <div class="qb-icon">
+        <svg viewBox="0 0 24 24"><path d="m3 17 6-6 4 4 7-7v4h2V5h-7v2h4l-6 6-4-4-8 8z"/></svg>
+      </div>
+      <div class="qb-info">
+        <p class="label-caps text-cyan" id="qb-title">RETO PENDIENTE</p>
+        <p class="qb-sub" id="qb-sub">Juega para avanzar</p>
+      </div>
+      <button class="btn-3d btn-primary btn-sm" id="qb-btn">JUGAR</button>
+    </div>
+
+    <div class="vignette"></div>
+  </main>
+
+  <!-- ============ LEADERBOARD ============ -->
+  <main id="view-rank" class="view">
+    <header class="page-head">
+      <h1 class="page-title">Clasificación</h1>
+      <p class="page-sub" id="rank-sub">Reto de hoy</p>
+    </header>
+
+    <div class="seg" id="rank-seg">
+      <button class="seg-btn active" data-range="today">Hoy</button>
+      <button class="seg-btn" data-range="week">Semana</button>
+      <button class="seg-btn" data-range="all">Total</button>
+    </div>
+
+    <section class="podium-wrap" id="rank-podium"></section>
+
+    <section class="section">
+      <div id="rank-list" class="stack"></div>
+    </section>
+  </main>
+
+  <!-- ============ PROFILE ============ -->
+  <main id="view-profile" class="view">
+    <header class="page-head profile-head">
+      <div class="avatar avatar-xl glow-primary" id="prof-avatar">🦊</div>
+      <h1 class="page-title" id="prof-name">Jugador</h1>
+      <p class="label-caps text-cyan" id="prof-title-badge">NOVATO NEÓN</p>
+      <button class="link-btn" id="prof-edit-btn">✏️ Editar perfil</button>
+    </header>
+
+    <section class="section">
+      <div class="stat-grid">
+        <div class="card glass stat-pod"><p class="stats-number text-primary" id="st-played">0</p><p class="label-caps text-muted">PARTIDAS</p></div>
+        <div class="card glass stat-pod"><p class="stats-number text-cyan" id="st-streak">0</p><p class="label-caps text-muted">RACHA</p></div>
+        <div class="card glass stat-pod"><p class="stats-number text-pink" id="st-wins">0</p><p class="label-caps text-muted">DUELOS GANADOS</p></div>
+        <div class="card glass stat-pod"><p class="stats-number text-gold" id="st-points">0</p><p class="label-caps text-muted">PUNTOS TOTALES</p></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><p class="label-caps text-muted">INSIGNIAS</p></div>
+      <div class="badge-grid" id="prof-badges"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><p class="label-caps text-muted">ACTIVIDAD RECIENTE</p></div>
+      <div id="prof-activity" class="stack"></div>
+    </section>
+
+    <section class="section">
+      <button class="btn-3d btn-danger btn-block" id="prof-reset-btn">BORRAR TODOS MIS DATOS</button>
+    </section>
+  </main>
+
+  <!-- ============ BOTTOM NAV ============ -->
+  <nav class="bottom-nav glass">
+    <button class="nav-btn active" data-goto="home">
+      <svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1Z"/></svg>
+      <span>Inicio</span>
+    </button>
+    <button class="nav-btn" data-goto="duel">
+      <svg viewBox="0 0 24 24"><path d="M14.5 3 21 9.5l-2 2L12.5 5zM5 12.5 11.5 19l-2 2L3 14.5zM3 9.5 9.5 3l11 11L14 20.5z" opacity=".9"/></svg>
+      <span>Duelo</span>
+    </button>
+    <button class="nav-btn" data-goto="board">
+      <svg viewBox="0 0 24 24"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2m3 3.5A1.5 1.5 0 1 0 9.5 8 1.5 1.5 0 0 0 8 6.5m8 0A1.5 1.5 0 1 0 17.5 8 1.5 1.5 0 0 0 16 6.5m-4 4A1.5 1.5 0 1 0 13.5 12 1.5 1.5 0 0 0 12 10.5m-4 4A1.5 1.5 0 1 0 9.5 16 1.5 1.5 0 0 0 8 14.5m8 0A1.5 1.5 0 1 0 17.5 16 1.5 1.5 0 0 0 16 14.5"/></svg>
+      <span>Tablero</span>
+    </button>
+    <button class="nav-btn" data-goto="rank">
+      <svg viewBox="0 0 24 24"><path d="M4 21v-8h4v8zm6 0V6h4v15zm6 0v-11h4v11z"/></svg>
+      <span>Ranking</span>
+    </button>
+    <button class="nav-btn" data-goto="profile">
+      <svg viewBox="0 0 24 24"><path d="M12 12a4.5 4.5 0 1 0-4.5-4.5A4.5 4.5 0 0 0 12 12m0 2c-4 0-8 2-8 5v2h16v-2c0-3-4-5-8-5"/></svg>
+      <span>Perfil</span>
+    </button>
+  </nav>
+
+</div>
+
+<!-- ============ GAME OVERLAY ============ -->
+<div id="game-overlay" class="overlay hidden">
+  <header class="game-hud glass">
+    <button class="icon-btn" id="game-quit-btn">✕</button>
+    <div class="game-hud-mid">
+      <p class="label-caps text-cyan" id="game-hud-label">RETO</p>
+      <p class="hud-name" id="game-hud-title">—</p>
+    </div>
+    <div class="game-hud-score">
+      <p class="label-caps text-muted">PUNTOS</p>
+      <p class="stats-number text-primary" id="game-hud-score">0</p>
+    </div>
+  </header>
+  <div id="game-stage"></div>
+</div>
+
+<!-- ============ RESULT MODAL ============ -->
+<div id="result-modal" class="overlay hidden">
+  <div class="modal-card glass glow-edge">
+    <p class="label-caps" id="result-label">RESULTADO</p>
+    <h1 class="result-title" id="result-title">¡BIEN!</h1>
+    <p class="result-score" id="result-score">0</p>
+    <p class="body-md text-muted" id="result-detail"></p>
+    <div class="modal-actions" id="result-actions"></div>
+  </div>
+</div>
+
+<!-- ============ PROFILE EDIT MODAL ============ -->
+<div id="edit-modal" class="overlay hidden">
+  <div class="modal-card glass glow-edge">
+    <p class="label-caps text-cyan">TU PERFIL</p>
+    <div class="field">
+      <label class="label-caps text-muted" for="edit-name">NOMBRE</label>
+      <input type="text" id="edit-name" class="input" maxlength="14" placeholder="Tu nombre">
+    </div>
+    <p class="label-caps text-muted">AVATAR</p>
+    <div class="emoji-grid" id="edit-emojis"></div>
+    <div class="modal-actions">
+      <button class="btn-3d btn-primary btn-block" id="edit-save-btn">GUARDAR</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="js/games.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
